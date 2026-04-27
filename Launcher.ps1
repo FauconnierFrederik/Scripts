@@ -67,6 +67,12 @@ $Scripts = @(
         Path        = "$ScriptBase\Launch-WinUtil.ps1"
     }
 
+    @{
+        Name        = "Schijf – Ruimte vrijmaken"
+        Description = "Verwijdert veilig tijdelijke bestanden, logs en caches. Optie om wekelijks in te plannen."
+        Path        = "$ScriptBase\Clear-DiskSpace.ps1"
+    }
+
     # ── Voeg hier nieuwe scripts toe ──────────────────────────
 
     # @{

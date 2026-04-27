@@ -24,6 +24,7 @@ This downloads all scripts to `C:\Scripts\batch\` and launches the menu automati
 | **Install-CheckPSCMService** | Installs a scheduled task that monitors and auto-restarts a Windows service every hour |
 | **MFATypeReport** | Exports a CSV report of MFA registration status for all Microsoft 365 users |
 | **Launch-WinUtil** | Launches Chris Titus Tech's WinUtil — software install, Windows tweaks and repairs (requires internet) |
+| **Clear-DiskSpace** | Safely frees disk space by removing temp files, logs and caches. Option to schedule weekly. |
 
 ## Requirements
 
