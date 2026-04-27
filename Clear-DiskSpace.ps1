@@ -27,8 +27,9 @@ function Write-Err     { param([string]$Msg) Write-Host "    [!!] $Msg" -Foregro
 function Get-FolderSizeMB {
     param([string]$Path)
     if (-not (Test-Path $Path)) { return 0 }
-    $bytes = (Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue |
+    $bytes = (Get-ChildItem $Path -Recurse -Force -File -ErrorAction SilentlyContinue |
               Measure-Object -Property Length -Sum).Sum
+    if (-not $bytes) { return 0 }
     return [math]::Round($bytes / 1MB, 1)
 }
 
