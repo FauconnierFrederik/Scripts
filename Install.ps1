@@ -34,10 +34,11 @@ foreach ($script in $Scripts) {
     $url  = "$RepoBase/$script"
     $dest = "$LocalBase\$script"
     try {
-        Invoke-RestMethod -Uri $url -OutFile $dest
+        $inhoud = Invoke-RestMethod -Uri $url
+        [System.IO.File]::WriteAllText($dest, $inhoud, [System.Text.Encoding]::UTF8)
         Write-Host "  [OK] $script" -ForegroundColor Green
     } catch {
-        Write-Host "  [!!] $script — $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "  [!!] $script - $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
