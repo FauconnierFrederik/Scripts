@@ -112,28 +112,32 @@ function Show-TaakKeuze {
         $y += 28
     }
 
+    $yWarn   = $y + 10
+    $yBtn    = $y + 40
+    $yClient = $y + 84
+
     $lblWarn           = New-Object System.Windows.Forms.Label
     $lblWarn.Text      = "Alle acties zijn veilig en omkeerbaar via Windows Update / herinstallatie."
-    $lblWarn.Location  = New-Object System.Drawing.Point(12, $y + 10)
+    $lblWarn.Location  = New-Object System.Drawing.Point(12, $yWarn)
     $lblWarn.Size      = New-Object System.Drawing.Size(468, 20)
     $lblWarn.ForeColor = [System.Drawing.Color]::Gray
 
     $btnOK              = New-Object System.Windows.Forms.Button
     $btnOK.Text         = "Uitvoeren"
-    $btnOK.Location     = New-Object System.Drawing.Point(290, $y + 40)
+    $btnOK.Location     = New-Object System.Drawing.Point(290, $yBtn)
     $btnOK.Size         = New-Object System.Drawing.Size(90, 30)
     $btnOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
     $btnCancel              = New-Object System.Windows.Forms.Button
     $btnCancel.Text         = "Annuleren"
-    $btnCancel.Location     = New-Object System.Drawing.Point(392, $y + 40)
+    $btnCancel.Location     = New-Object System.Drawing.Point(392, $yBtn)
     $btnCancel.Size         = New-Object System.Drawing.Size(90, 30)
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 
     $form.Controls.AddRange(@($lblInfo, $lblKies, $lblWarn, $btnOK, $btnCancel))
     $form.AcceptButton = $btnOK
     $form.CancelButton = $btnCancel
-    $form.ClientSize   = New-Object System.Drawing.Size(500, $y + 84)
+    $form.ClientSize   = New-Object System.Drawing.Size(500, $yClient)
 
     if ($form.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         $geselecteerd = @{}
