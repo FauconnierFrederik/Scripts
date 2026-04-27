@@ -15,9 +15,9 @@ param(
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# ────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 #  HULPFUNCTIES
-# ────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 
 function Write-Step    { param([string]$Msg) Write-Host "`n[*] $Msg" -ForegroundColor Cyan }
 function Write-Success { param([string]$Msg) Write-Host "    [OK] $Msg" -ForegroundColor Green }
@@ -63,9 +63,9 @@ function Get-DriveInfo {
     }
 }
 
-# ────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 #  CHECKBOX FORMULIER (interactieve modus)
-# ────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 
 function Show-TaakKeuze {
     param([hashtable]$Schijf)
@@ -143,9 +143,9 @@ function Show-TaakKeuze {
     return $null
 }
 
-# ────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 #  SCHEDULED TASK AANMAKEN
-# ────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 
 function Register-WeeklyCleanup {
     param([string]$ScriptPad)
@@ -201,9 +201,9 @@ function Register-WeeklyCleanup {
     )
 }
 
-# ────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 #  OPRUIMINGSTAKEN UITVOEREN
-# ────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 
 function Invoke-Cleanup {
     param([hashtable]$Keuzes)
@@ -293,13 +293,13 @@ function Invoke-Cleanup {
     return $totaalVrij
 }
 
-# ────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 #  HOOFDLOGICA
-# ────────────────────────────────────────────────────────────
+# ------------------------------------------------------------
 
 Write-Host ""
 Write-Host "  Schijf Opruimen" -ForegroundColor Cyan
-Write-Host "  $('─' * 50)" -ForegroundColor DarkGray
+Write-Host "  $('-' * 50)" -ForegroundColor DarkGray
 
 $schijfVoor = Get-DriveInfo "C"
 
@@ -334,11 +334,11 @@ $schijfNa   = Get-DriveInfo "C"
 $verschil   = [math]::Round($schijfNa.Vrij - $schijfVoor.Vrij, 2)
 
 Write-Host ""
-Write-Host "  $('─' * 50)" -ForegroundColor DarkGray
+Write-Host "  $('-' * 50)" -ForegroundColor DarkGray
 Write-Host "  Vrijgemaakt : $totaalVrij MB" -ForegroundColor Green
 Write-Host "  Vrij voor   : $($schijfVoor.Vrij) GB" -ForegroundColor White
 Write-Host "  Vrij na     : $($schijfNa.Vrij) GB" -ForegroundColor Green
-Write-Host "  $('─' * 50)" -ForegroundColor DarkGray
+Write-Host "  $('-' * 50)" -ForegroundColor DarkGray
 
 if (-not $Scheduled) {
     Add-Type -AssemblyName Microsoft.VisualBasic
