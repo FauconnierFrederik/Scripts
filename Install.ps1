@@ -17,6 +17,7 @@ $Scripts = @(
     "Create-RebootTasks.ps1"
     "Install-CheckPSCMService.ps1"
     "Setup-DomainController.ps1"
+    "Launch-WinUtil.ps1"
 )
 
 Write-Host ""

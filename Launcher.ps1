@@ -61,6 +61,12 @@ $Scripts = @(
         Path        = "$ScriptBase\Setup-DomainController.ps1"
     }
 
+    @{
+        Name        = "WinUtil – Chris Titus Tech"
+        Description = "Start WinUtil: software installeren, Windows tweaks, optimalisaties en reparaties. (vereist internet)"
+        Path        = "$ScriptBase\Launch-WinUtil.ps1"
+    }
+
     # ── Voeg hier nieuwe scripts toe ──────────────────────────
 
     # @{
