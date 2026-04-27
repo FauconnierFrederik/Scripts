@@ -7,7 +7,7 @@
 # ============================================================
 
 $RepoBase  = "https://raw.githubusercontent.com/FauconnierFrederik/Scripts/main"
-$LocalBase = "C:\_uvion"
+$LocalBase = "C:\_uvion\batch"
 
 $Scripts = @(
     "UViON-Launcher.ps1"
