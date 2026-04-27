@@ -14,8 +14,8 @@ Add-Type -AssemblyName Microsoft.VisualBasic
 Add-Type -AssemblyName System.Windows.Forms
 
 $Hostname = $env:COMPUTERNAME
-$RDPPad   = "C:\_uvion\$Hostname.rdp"
-$CertPad  = "C:\_uvion\$Hostname.cer"
+$RDPPad   = "C:\Scripts\$Hostname.rdp"
+$CertPad  = "C:\Scripts\$Hostname.cer"
 
 # ------------------------------------------------------------
 # POPUP - Keuze: volledig of alleen RDP opnieuw aanmaken

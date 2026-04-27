@@ -1,6 +1,6 @@
 ﻿# ============================================================
-#  UViON-Launcher.ps1
-#  Centraal startpunt voor UViON beheerscripts.
+#  Launcher.ps1
+#  Centraal startpunt voor beheerscripts.
 #  Meerdere scripts tegelijk selecteerbaar via nummers.
 #  Uitvoeren als Administrator aanbevolen.
 # ============================================================

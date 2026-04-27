@@ -1,16 +1,16 @@
 # ============================================================
-#  UViON Script Installer
+#  Script Installer
 #  Gebruik:
 #    irm https://raw.githubusercontent.com/FauconnierFrederik/Scripts/main/Install.ps1 | iex
 #
-#  Downloadt alle UViON scripts naar C:\_uvion en start de launcher.
+#  Downloadt alle scripts naar C:\Scripts\batch\ en start de launcher.
 # ============================================================
 
 $RepoBase  = "https://raw.githubusercontent.com/FauconnierFrederik/Scripts/main"
-$LocalBase = "C:\_uvion\batch"
+$LocalBase = "C:\Scripts\batch"
 
 $Scripts = @(
-    "UViON-Launcher.ps1"
+    "Launcher.ps1"
     "MFATypeReport.ps1"
     "Setup-RDPV4.ps1"
     "Enable-Archive.ps1"
@@ -20,7 +20,7 @@ $Scripts = @(
 )
 
 Write-Host ""
-Write-Host "  UViON Script Installer" -ForegroundColor Cyan
+Write-Host "  Script Installer" -ForegroundColor Cyan
 Write-Host "  $('─' * 40)" -ForegroundColor DarkGray
 Write-Host ""
 
@@ -45,4 +45,4 @@ Write-Host "  Alle scripts gedownload naar $LocalBase" -ForegroundColor Cyan
 Write-Host "  Launcher starten..." -ForegroundColor DarkGray
 Write-Host ""
 
-& "$LocalBase\UViON-Launcher.ps1"
+& "$LocalBase\Launcher.ps1"

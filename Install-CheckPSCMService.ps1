@@ -1,15 +1,15 @@
 # ============================================================
 #  Install-CheckPSCMService.ps1
-#  Schrijft het check-script naar C:\_uvion_batch en
-#  registreert de Scheduled Task 'UViON - Check PSCM Service'.
+#  Schrijft het check-script naar C:\Scripts\batch en
+#  registreert de Scheduled Task 'Check PSCM Service'.
 #  Eenmalig uitvoeren als Administrator.
 # ============================================================
 
 #Requires -RunAsAdministrator
 
 # ── Configuratie ────────────────────────────────────────────
-$TaskName   = "UViON - Check PSCM Service"
-$ScriptDir  = "C:\_uvion_batch"
+$TaskName   = "Check PSCM Service"
+$ScriptDir  = "C:\Scripts\batch"
 $ScriptPath = "$ScriptDir\Watch-CagService.ps1"
 $Description = "Controleert elk uur of de CagService actief is en herstart deze indien nodig."
 

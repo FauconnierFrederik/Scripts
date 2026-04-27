@@ -119,7 +119,7 @@ if ($domainRole -ge 4) {
 }
 
 Write-Host ""
-Write-Host "  DC Setup – UViON" -ForegroundColor Cyan
+Write-Host "  DC Setup" -ForegroundColor Cyan
 Write-Host "  $('─' * 50)" -ForegroundColor DarkGray
 Write-Host ""
 
