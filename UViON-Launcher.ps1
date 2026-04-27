@@ -8,13 +8,19 @@
 #Requires -RunAsAdministrator
 
 # ════════════════════════════════════════════════════════════
+#  BASISPAD — scripts worden gezocht in dezelfde map als de launcher
+#  Wil je scripts in een andere map? Pas $ScriptBase aan.
+# ════════════════════════════════════════════════════════════
+$ScriptBase = $PSScriptRoot
+
+# ════════════════════════════════════════════════════════════
 #  SCRIPTS TOEVOEGEN — pas alleen dit blok aan
 #
 #  Formaat per entry:
 #  @{
 #      Name        = "Korte weergavenaam"
 #      Description = "Wat doet dit script?"
-#      Path        = "C:\pad\naar\script.ps1"
+#      Path        = "$ScriptBase\NaamVanScript.ps1"
 #  }
 # ════════════════════════════════════════════════════════════
 $Scripts = @(
@@ -22,37 +28,37 @@ $Scripts = @(
     @{
         Name        = "Install – Check PSCM Service"
         Description = "Installeert Watch-CagService.ps1 en registreert de Scheduled Task."
-        Path        = "$PSScriptRoot\Install-CheckPSCMService.ps1"
+        Path        = "$ScriptBase\Install-CheckPSCMService.ps1"
     }
 
     @{
         Name        = "Rapport – MFA Type overzicht"
         Description = "Genereert een CSV-rapport van MFA-registratie voor alle M365-gebruikers via MSOnline."
-        Path        = "$PSScriptRoot\MFATypeReport.ps1"
+        Path        = "$ScriptBase\MFATypeReport.ps1"
     }
 
     @{
         Name        = "Setup – RDP certificaat en bestand"
         Description = "Maakt een self-signed certificaat aan, configureert RDP-Tcp en genereert een gesigned RDP-bestand."
-        Path        = "$PSScriptRoot\Setup-RDPV4.ps1"
+        Path        = "$ScriptBase\Setup-RDPV4.ps1"
     }
 
     @{
         Name        = "Taken – Reboot scheduled tasks aanmaken"
         Description = "Maakt een wekelijkse en een eenmalige reboot-taak aan onder het SYSTEM-account."
-        Path        = "$PSScriptRoot\Create-RebootTasks.ps1"
+        Path        = "$ScriptBase\Create-RebootTasks.ps1"
     }
 
     @{
         Name        = "Exchange – Online Archief activeren"
         Description = "Activeert het Exchange Online archief voor een mailbox en koppelt een retention policy van 3 jaar."
-        Path        = "$PSScriptRoot\Enable-Archive.ps1"
+        Path        = "$ScriptBase\Enable-Archive.ps1"
     }
 
     @{
         Name        = "Setup – Domain Controller (nieuw forest)"
         Description = "Installeert AD DS en promoveert de server tot eerste DC in een nieuw domein. Herstart automatisch."
-        Path        = "$PSScriptRoot\Setup-DomainController.ps1"
+        Path        = "$ScriptBase\Setup-DomainController.ps1"
     }
 
     # ── Voeg hier nieuwe scripts toe ──────────────────────────
@@ -60,7 +66,7 @@ $Scripts = @(
     # @{
     #     Name        = "Mijn Nieuw Script"
     #     Description = "Korte uitleg over wat dit script doet."
-    #     Path        = "$PSScriptRoot\MijnNieuwScript.ps1"
+    #     Path        = "$ScriptBase\MijnNieuwScript.ps1"
     # }
 
 )
