@@ -19,6 +19,7 @@ $Scripts = @(
     "Setup-DomainController.ps1"
     "Launch-WinUtil.ps1"
     "Clear-DiskSpace.ps1"
+    "Get-ServerHealth.ps1"
 )
 
 Write-Host ""

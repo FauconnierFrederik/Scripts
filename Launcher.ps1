@@ -68,9 +68,15 @@ $Scripts = @(
     }
 
     @{
-        Name        = "Schijf – Ruimte vrijmaken"
+        Name        = "Schijf - Ruimte vrijmaken"
         Description = "Verwijdert veilig tijdelijke bestanden, logs en caches. Optie om wekelijks in te plannen."
         Path        = "$ScriptBase\Clear-DiskSpace.ps1"
+    }
+
+    @{
+        Name        = "Health - Server gezondheidscheck"
+        Description = "Controleert CPU, RAM, schijven, services en event log. Exporteerbaar als HTML rapport."
+        Path        = "$ScriptBase\Get-ServerHealth.ps1"
     }
 
     # ── Voeg hier nieuwe scripts toe ──────────────────────────

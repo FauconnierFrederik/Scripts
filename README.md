@@ -25,6 +25,7 @@ This downloads all scripts to `C:\Scripts\batch\` and launches the menu automati
 | **MFATypeReport** | Exports a CSV report of MFA registration status for all Microsoft 365 users |
 | **Launch-WinUtil** | Launches Chris Titus Tech's WinUtil — software install, Windows tweaks and repairs (requires internet) |
 | **Clear-DiskSpace** | Safely frees disk space by removing temp files, logs and caches. Option to schedule weekly. |
+| **Get-ServerHealth** | Checks CPU, RAM, disks, services and event log. Exports color-coded HTML report. |
 
 ## Requirements
 
