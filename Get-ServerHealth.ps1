@@ -243,14 +243,50 @@ $exporteren = [System.Windows.Forms.MessageBox]::Show(
 )
 
 if ($exporteren -eq "Yes") {
-    $datum     = Get-Date -Format "yyyyMMdd-HHmm"
-    $htmlPad   = "C:\Scripts\$($env:COMPUTERNAME)-Health-$datum.html"
+    $datum   = Get-Date -Format "yyyyMMdd-HHmm"
+    $htmlPad = "C:\Scripts\$($env:COMPUTERNAME)-Health-$datum.html"
 
+    # Overzichtstabel rijen
     $rijen = ($Rapport | ForEach-Object {
         $kleur = Get-StatusKleur $_.Status
         $tag   = switch ($_.Status) { "OK" { "OK" } "WARN" { "!" } "KRIT" { "!!" } default { "-" } }
         "<tr><td style='color:$kleur;font-weight:bold'>[$tag]</td><td>$($_.Label)</td><td>$($_.Waarde)</td></tr>"
     }) -join "`n"
+
+    # Event log tabel rijen
+    if ($events -and $events.Count -gt 0) {
+        $eventRijen = ($events | ForEach-Object {
+            $lvlTekst  = if ($_.Level -eq 1) { "Kritiek" } else { "Fout" }
+            $lvlKleur  = if ($_.Level -eq 1) { "#e74c3c" } else { "#f39c12" }
+            $tijd      = $_.TimeCreated.ToString("dd/MM/yyyy HH:mm:ss")
+            $bericht   = $_.Message -replace "&","&amp;" -replace "<","&lt;" -replace ">","&gt;" -replace "`n","<br>"
+            "<tr>
+                <td style='color:$lvlKleur;font-weight:bold;white-space:nowrap'>$lvlTekst</td>
+                <td style='white-space:nowrap'>$tijd</td>
+                <td style='white-space:nowrap'>$($_.LogName)</td>
+                <td style='white-space:nowrap'>$($_.Id)</td>
+                <td style='white-space:nowrap'>$($_.ProviderName)</td>
+                <td style='font-size:12px'>$bericht</td>
+            </tr>"
+        }) -join "`n"
+
+        $eventSectie = @"
+<h3 style='color:#00d4ff;margin-top:40px'>Event Log - Laatste $EventLogUren uur ($($events.Count) events)</h3>
+<table>
+<tr>
+  <th>Level</th>
+  <th>Tijdstip</th>
+  <th>Log</th>
+  <th>Event ID</th>
+  <th>Bron</th>
+  <th>Bericht</th>
+</tr>
+$eventRijen
+</table>
+"@
+    } else {
+        $eventSectie = "<p style='color:#2ecc71'>Geen kritieke events of fouten gevonden in de laatste $EventLogUren uur.</p>"
+    }
 
     $html = @"
 <!DOCTYPE html>
@@ -259,26 +295,32 @@ if ($exporteren -eq "Yes") {
 <meta charset='UTF-8'>
 <title>Server Health - $($env:COMPUTERNAME)</title>
 <style>
-  body { font-family: Segoe UI, sans-serif; background:#1a1a2e; color:#eee; margin:40px; }
-  h1   { color:#00d4ff; }
-  h2   { color:#aaa; font-size:13px; font-weight:normal; margin-top:-10px; }
-  table{ border-collapse:collapse; width:100%; margin-top:20px; }
-  th   { background:#16213e; color:#00d4ff; padding:10px; text-align:left; }
-  td   { padding:8px 10px; border-bottom:1px solid #333; }
+  body  { font-family: Segoe UI, sans-serif; background:#1a1a2e; color:#eee; margin:40px; }
+  h1    { color:#00d4ff; margin-bottom:4px; }
+  h3    { color:#00d4ff; }
+  .sub  { color:#aaa; font-size:13px; margin-top:0; margin-bottom:20px; }
+  table { border-collapse:collapse; width:100%; margin-top:10px; }
+  th    { background:#16213e; color:#00d4ff; padding:10px; text-align:left; font-size:13px; }
+  td    { padding:8px 10px; border-bottom:1px solid #2a2a4a; vertical-align:top; font-size:13px; }
   tr:hover td { background:#16213e; }
-  .ok   { color:#2ecc71; } .warn { color:#f39c12; } .krit { color:#e74c3c; }
-  .badge{ display:inline-block; padding:4px 12px; border-radius:4px; font-weight:bold; }
+  .badge { display:inline-block; padding:5px 14px; border-radius:4px; font-weight:bold; color:#fff; }
 </style>
 </head>
 <body>
 <h1>Server Health Check</h1>
-<h2>$($env:COMPUTERNAME) &nbsp;|&nbsp; $nu</h2>
+<p class='sub'>$($env:COMPUTERNAME) &nbsp;|&nbsp; $nu</p>
+
 <p>Eindstatus: <span class='badge' style='background:$(Get-StatusKleur $ovStatus)'>$ovStatus</span>
-&nbsp; Kritiek: <b>$aantalKrit</b> &nbsp; Waarschuwing: <b>$aantalWarn</b></p>
+&nbsp;&nbsp; Kritiek: <b>$aantalKrit</b> &nbsp; Waarschuwing: <b>$aantalWarn</b></p>
+
+<h3>Overzicht</h3>
 <table>
 <tr><th>Status</th><th>Onderdeel</th><th>Waarde</th></tr>
 $rijen
 </table>
+
+$eventSectie
+
 </body>
 </html>
 "@
