@@ -64,6 +64,39 @@ function Write-Log {
     }
 }
 
+# ─── Helper: zip met DoEvents per bestand (UI blijft responsief) ─────────────
+function Compress-WithProgress {
+    param([string]$SourceDir, [string]$ZipPath)
+
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    $files = Get-ChildItem $SourceDir -Recurse -File -ErrorAction SilentlyContinue
+    if (-not $files) { return }
+
+    $zip = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        $done = 0
+        foreach ($file in $files) {
+            $entryName = $file.FullName.Substring($SourceDir.TrimEnd('\').Length + 1)
+            try {
+                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                    $zip, $file.FullName, $entryName,
+                    [System.IO.Compression.CompressionLevel]::Optimal
+                ) | Out-Null
+            } catch {
+                # Sla vergrendelde bestanden over
+            }
+            $done++
+            if ($done % 20 -eq 0) {
+                [System.Windows.Forms.Application]::DoEvents()
+            }
+        }
+    } finally {
+        $zip.Dispose()
+    }
+}
+
 # ─── Helper: voortgang ────────────────────────────────────────────────────────
 function Update-Progress {
     param([string]$Status)
@@ -219,13 +252,14 @@ function Backup-ChromeProfile {
                         @('/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
         & robocopy @robocopyArgs | Out-Null
 
-        Compress-Archive -Path "$tempDir\*" -DestinationPath $zipDest -Force
+        Write-Log "Chrome bestanden zippen..."
+        Compress-WithProgress -SourceDir $tempDir -ZipPath $zipDest
         $size = [Math]::Round((Get-Item $zipDest).Length / 1MB, 1)
         Write-Log "Chrome profiel gezipt: $zipDest ($size MB)" -Level OK
     } catch {
         Write-Log "Chrome backup fout (probeer directe zip): $_" -Level WARN
         try {
-            Compress-Archive -Path $chromeSrc -DestinationPath $zipDest -Force
+            Compress-WithProgress -SourceDir $chromeSrc -ZipPath $zipDest
             Write-Log "Chrome profiel gezipt (met cache)" -Level OK
         } catch {
             Write-Log "Chrome backup mislukt: $_" -Level ERROR
@@ -266,7 +300,8 @@ function Backup-EdgeProfile {
         $robocopyArgs = @($edgeSrc, $tempDir, '/E', '/XD') + $excludeDirs +
                         @('/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
         & robocopy @robocopyArgs | Out-Null
-        Compress-Archive -Path "$tempDir\*" -DestinationPath $zipDest -Force -ErrorAction SilentlyContinue
+        Write-Log "Edge bestanden zippen..."
+        Compress-WithProgress -SourceDir $tempDir -ZipPath $zipDest
         if (Test-Path $zipDest) {
             $size = [Math]::Round((Get-Item $zipDest).Length / 1MB, 1)
             Write-Log "Edge profiel gezipt: $zipDest ($size MB)" -Level OK
@@ -290,7 +325,8 @@ function Backup-FirefoxProfile {
 
     $zipDest = Join-Path $BackupPath "Firefox_Profiles.zip"
     try {
-        Compress-Archive -Path $ffSrc -DestinationPath $zipDest -Force
+        Write-Log "Firefox profielen zippen..."
+        Compress-WithProgress -SourceDir $ffSrc -ZipPath $zipDest
         $size = [Math]::Round((Get-Item $zipDest).Length / 1MB, 1)
         Write-Log "Firefox profielen gezipt: $zipDest ($size MB)" -Level OK
     } catch {
@@ -1061,7 +1097,7 @@ $btnStart.Add_Click({
         if ($chkZip.Checked) {
             Update-Progress "Alles zippen naar ZIP bestand..."
             $zipPath = "$($script:BackupRoot).zip"
-            Compress-Archive -Path "$($script:BackupRoot)\*" -DestinationPath $zipPath -Force -ErrorAction SilentlyContinue
+            Compress-WithProgress -SourceDir $script:BackupRoot -ZipPath $zipPath
             $zipMB = [Math]::Round((Get-Item $zipPath).Length / 1MB, 0)
             Write-Log "Alles gezipt: $zipPath ($zipMB MB)" -Level OK
         }
