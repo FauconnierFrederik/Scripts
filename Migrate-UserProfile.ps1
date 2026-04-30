@@ -294,7 +294,8 @@ function Backup-UserFolders {
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
 
         try {
-            $exitCode = (& robocopy $src $dest /E /COPYALL /XA:ST /R:1 /W:1 /NP /MT:8 2>&1 | Out-Null; $LASTEXITCODE)
+            & robocopy $src $dest /E /COPYALL /XA:ST /R:1 /W:1 /NP /MT:8 | Out-Null
+            $exitCode = $LASTEXITCODE
             if ($exitCode -le 7) {
                 $items = (Get-ChildItem $dest -Recurse -File -ErrorAction SilentlyContinue).Count
                 Write-Log "$folder gekopieerd ($items bestanden)" -Level OK
@@ -717,7 +718,7 @@ $btnTestConn.Size      = New-Object System.Drawing.Size(120, 26)
 $btnTestConn.Add_Click({
     $comp = $txtComputer.Text.Trim()
     if ($comp -eq $env:COMPUTERNAME) {
-        [System.Windows.Forms.MessageBox]::Show("Lokale computer – geen netwerkverbinding nodig.","Test") | Out-Null
+        [System.Windows.Forms.MessageBox]::Show("Lokale computer - geen netwerkverbinding nodig.","Test") | Out-Null
         return
     }
     if (Test-Connection -ComputerName $comp -Count 1 -Quiet) {
