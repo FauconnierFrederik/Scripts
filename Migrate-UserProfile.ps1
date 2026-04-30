@@ -735,7 +735,7 @@ $lblUser.Size          = New-Object System.Drawing.Size(120, 20)
 $grpSource.Controls.Add($lblUser)
 
 $txtUser               = New-Object System.Windows.Forms.TextBox
-$txtUser.Text          = $env:USERNAME
+$txtUser.Text          = [System.IO.Path]::GetFileName($env:USERPROFILE)
 $txtUser.Location      = New-Object System.Drawing.Point(135, 53)
 $txtUser.Size          = New-Object System.Drawing.Size(200, 23)
 $grpSource.Controls.Add($txtUser)
@@ -997,7 +997,23 @@ $btnStart.Add_Click({
             $sourceUserFolder = "\\$sourceComputer\c$\Users\$sourceUser"
         }
     } else {
-        $sourceUserFolder = "C:\Users\$sourceUser"
+        # Lokaal: gebruik USERPROFILE voor actieve gebruiker, anders zoek via registry (domein suffix zoals .UVION)
+        if ($sourceUser -ieq $env:USERNAME) {
+            $sourceUserFolder = $env:USERPROFILE
+        } else {
+            # Zoek profielpad via registry (ProfileList) voor andere gebruikers
+            $profileFolder = $null
+            $profileList = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList" -ErrorAction SilentlyContinue
+            foreach ($key in $profileList) {
+                $profilePath = (Get-ItemProperty $key.PSPath -Name ProfileImagePath -ErrorAction SilentlyContinue).ProfileImagePath
+                if ($profilePath -and ($profilePath -like "*\$sourceUser" -or $profilePath -like "*\$sourceUser.*")) {
+                    $profileFolder = $profilePath
+                    break
+                }
+            }
+            $sourceUserFolder = if ($profileFolder) { $profileFolder } else { "C:\Users\$sourceUser" }
+        }
+        Write-Log "Profielmap: $sourceUserFolder"
     }
 
     if ($sourceUserFolder -and -not (Test-Path $sourceUserFolder)) {
