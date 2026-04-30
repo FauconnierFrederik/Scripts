@@ -487,8 +487,8 @@ function Backup-WiFiProfiles {
             ForEach-Object { $_.Matches[0].Groups[2].Value.Trim() }
 
         $count = 0
-        foreach ($profile in $profiles) {
-            netsh wlan export profile name="$profile" folder="$wifiDir" key=clear 2>&1 | Out-Null
+        foreach ($wlanProfile in $profiles) {
+            netsh wlan export profile name="$wlanProfile" folder="$wifiDir" key=clear 2>&1 | Out-Null
             $count++
         }
 
@@ -687,13 +687,231 @@ HERSTEL INSTRUCTIES NIEUWE COMPUTER:
     return $reportPath
 }
 
+# ─── Helper: unzip zonder UI blokkering ──────────────────────────────────────
+function Expand-WithProgress {
+    param([string]$ZipPath, [string]$DestDir)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $done = 0
+        foreach ($entry in $zip.Entries) {
+            if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\')) { continue }
+            $destPath  = Join-Path $DestDir $entry.FullName
+            $destParent = [System.IO.Path]::GetDirectoryName($destPath)
+            if (-not (Test-Path $destParent)) {
+                New-Item -ItemType Directory -Path $destParent -Force | Out-Null
+            }
+            try {
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destPath, $true)
+            } catch { }
+            $done++
+            if ($done % 25 -eq 0) { [System.Windows.Forms.Application]::DoEvents() }
+        }
+    } finally {
+        $zip.Dispose()
+    }
+}
+
+# ─── Backup metadata opslaan / lezen ─────────────────────────────────────────
+function Save-BackupMetadata {
+    param([string]$BackupPath, [string]$SourceComputer, [string]$SourceUser,
+          [string]$DestType, [string]$NetworkBase)
+    @{
+        Version        = '1.0'
+        Date           = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        SourceComputer = $SourceComputer
+        SourceUser     = $SourceUser
+        BackupPath     = $BackupPath
+        DestType       = $DestType      # 'network' of 'local'
+        NetworkBase    = $NetworkBase
+    } | ConvertTo-Json | Out-File "$BackupPath\backup_metadata.json" -Encoding UTF8
+}
+
+function Read-BackupMetadata {
+    param([string]$BackupPath)
+    $f = Join-Path $BackupPath "backup_metadata.json"
+    if (Test-Path $f) {
+        return (Get-Content $f -Raw | ConvertFrom-Json)
+    }
+    return $null
+}
+
+# ─── Restore: Printers ───────────────────────────────────────────────────────
+function Restore-Printers {
+    param([string]$BackupPath)
+    Update-Progress "Printers herstellen..."
+    $exportFile = Join-Path $BackupPath "printers.printerExport"
+    $csvFile    = Join-Path $BackupPath "printer_list.csv"
+    $printbrm   = @("$env:SystemRoot\System32\spool\tools\PrintBrm.exe",
+                    "$env:SystemRoot\SysWOW64\spool\tools\PrintBrm.exe") |
+                  Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ((Test-Path $exportFile) -and $printbrm) {
+        & $printbrm -R -F $exportFile 2>&1 | ForEach-Object { Write-Log $_ }
+        Write-Log "Printers hersteld via PrintBrm" -Level OK
+    } elseif (Test-Path $csvFile) {
+        Write-Log "printer_list.csv gevonden - voeg printers manueel toe via Instellingen" -Level WARN
+        Start-Process explorer.exe $BackupPath
+    } else {
+        Write-Log "Geen printer backup gevonden" -Level WARN
+    }
+}
+
+# ─── Restore: Browser profiel ────────────────────────────────────────────────
+function Restore-BrowserProfile {
+    param([string]$BackupPath, [string]$Browser)
+    $cfg = switch ($Browser) {
+        'Chrome'  { @{ Zip='Chrome_UserData.zip';  Dest="$env:LOCALAPPDATA\Google\Chrome\User Data";   Proc='chrome'  } }
+        'Edge'    { @{ Zip='Edge_UserData.zip';    Dest="$env:LOCALAPPDATA\Microsoft\Edge\User Data"; Proc='msedge'  } }
+        'Firefox' { @{ Zip='Firefox_Profiles.zip'; Dest="$env:APPDATA\Mozilla\Firefox\Profiles";      Proc='firefox' } }
+    }
+    Update-Progress "$Browser profiel herstellen..."
+    $zipPath = Join-Path $BackupPath $cfg.Zip
+    if (-not (Test-Path $zipPath)) { Write-Log "$Browser backup niet gevonden ($($cfg.Zip))" -Level WARN; return }
+    if (Get-Process -Name $cfg.Proc -ErrorAction SilentlyContinue) {
+        Write-Log "$Browser staat nog open - sluit $Browser volledig af" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show(
+            "Sluit $Browser af voor het herstellen van het profiel.",
+            "$Browser is open", [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+        return
+    }
+    New-Item -ItemType Directory -Path $cfg.Dest -Force | Out-Null
+    Write-Log "$Browser profiel uitpakken naar $($cfg.Dest)..."
+    Expand-WithProgress -ZipPath $zipPath -DestDir $cfg.Dest
+    Write-Log "$Browser profiel hersteld" -Level OK
+}
+
+# ─── Restore: Gebruikersmappen ───────────────────────────────────────────────
+function Restore-UserFolders {
+    param([string]$BackupPath, [string[]]$Folders)
+    $userDataPath = Join-Path $BackupPath "UserData"
+    foreach ($folder in $Folders) {
+        $src = Join-Path $userDataPath $folder
+        if (-not (Test-Path $src)) { Write-Log "$folder backup niet gevonden" -Level WARN; continue }
+        Update-Progress "$folder herstellen..."
+        $dest = Join-Path $env:USERPROFILE $folder
+        New-Item -ItemType Directory -Path $dest -Force | Out-Null
+        & robocopy $src $dest /E /XA:ST /XJ /R:1 /W:1 /NP /MT:8 | Out-Null
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -le 7) {
+            $items = (Get-ChildItem $dest -Recurse -File -ErrorAction SilentlyContinue).Count
+            Write-Log "$folder hersteld ($items bestanden)" -Level OK
+        } else {
+            Write-Log "$folder gedeeltelijk hersteld (robocopy exit: $exitCode)" -Level WARN
+        }
+    }
+}
+
+# ─── Restore: Outlook handtekeningen ─────────────────────────────────────────
+function Restore-OutlookSignatures {
+    param([string]$BackupPath)
+    Update-Progress "Outlook handtekeningen herstellen..."
+    $src = Join-Path $BackupPath "Outlook_Signatures"
+    if (-not (Test-Path $src)) { Write-Log "Geen Outlook handtekeningen backup" -Level WARN; return }
+    $dest = "$env:APPDATA\Microsoft\Signatures"
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+    Copy-Item "$src\*" $dest -Recurse -Force
+    Write-Log "Outlook handtekeningen hersteld" -Level OK
+}
+
+# ─── Restore: Outlook PST ────────────────────────────────────────────────────
+function Restore-OutlookPST {
+    param([string]$BackupPath)
+    Update-Progress "Outlook PST herstellen..."
+    $pstSrc = Join-Path $BackupPath "Outlook_PST"
+    if (-not (Test-Path $pstSrc)) { Write-Log "Geen Outlook PST backup" -Level INFO; return }
+    $pstFiles = Get-ChildItem $pstSrc -Filter "*.pst"
+    if ($pstFiles.Count -eq 0) { Write-Log "Geen PST bestanden in backup" -Level INFO; return }
+    $destDir = "$env:USERPROFILE\Documents\Outlook Files"
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    foreach ($pst in $pstFiles) {
+        Write-Log "PST kopieren: $($pst.Name)..."
+        Copy-Item $pst.FullName $destDir -Force
+        Write-Log "PST gekopieerd: $($pst.Name)" -Level OK
+    }
+    [System.Windows.Forms.MessageBox]::Show(
+        "PST bestanden gekopieerd naar:`n$destDir`n`nVoeg toe in Outlook via:`nBestand > Account Instellingen > Gegevensbestanden > Toevoegen",
+        "Outlook PST - handmatige stap",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+}
+
+# ─── Restore: Mapped drives ──────────────────────────────────────────────────
+function Restore-MappedDrives {
+    param([string]$BackupPath)
+    Update-Progress "Mapped drives herstellen..."
+    $script = Join-Path $BackupPath "Restore-MappedDrives.ps1"
+    if (-not (Test-Path $script)) { Write-Log "Geen mapped drives backup" -Level WARN; return }
+    try {
+        & $script 2>&1 | ForEach-Object { Write-Log $_ }
+        Write-Log "Mapped drives hersteld" -Level OK
+    } catch { Write-Log "Mapped drives fout: $_" -Level ERROR }
+}
+
+# ─── Restore: WiFi profielen ─────────────────────────────────────────────────
+function Restore-WiFiProfiles {
+    param([string]$BackupPath)
+    Update-Progress "WiFi profielen herstellen..."
+    $wifiDir = Join-Path $BackupPath "WiFi_Profiles"
+    if (-not (Test-Path $wifiDir)) { Write-Log "Geen WiFi backup" -Level WARN; return }
+    $xmlFiles = Get-ChildItem $wifiDir -Filter "*.xml"
+    $count = 0
+    foreach ($xml in $xmlFiles) {
+        netsh wlan add profile filename="$($xml.FullName)" user=all 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $count++ }
+    }
+    Write-Log "WiFi profielen hersteld ($count van $($xmlFiles.Count))" -Level OK
+}
+
+# ─── Restore: Sticky Notes ───────────────────────────────────────────────────
+function Restore-StickyNotes {
+    param([string]$BackupPath)
+    Update-Progress "Sticky Notes herstellen..."
+    $src = Join-Path $BackupPath "StickyNotes"
+    if (-not (Test-Path $src)) { Write-Log "Geen Sticky Notes backup" -Level WARN; return }
+    $dest = "$env:LOCALAPPDATA\Packages\Microsoft.MicrosoftStickyNotes_8wekyb3d8bbwe\LocalState"
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+    Copy-Item "$src\*" $dest -Recurse -Force
+    Write-Log "Sticky Notes hersteld" -Level OK
+}
+
+# ─── Restore: Achtergrond ────────────────────────────────────────────────────
+function Restore-Wallpaper {
+    param([string]$BackupPath)
+    Update-Progress "Achtergrond herstellen..."
+    $wallpaper = Get-ChildItem $BackupPath -Filter "wallpaper.*" -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+    if (-not $wallpaper) { Write-Log "Geen achtergrond backup" -Level WARN; return }
+    $destPath = "$env:APPDATA\Microsoft\Windows\Themes\$($wallpaper.Name)"
+    Copy-Item $wallpaper.FullName $destPath -Force
+    Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public class WallpaperHelper {
+    [DllImport("user32.dll",CharSet=CharSet.Auto)]
+    public static extern int SystemParametersInfo(int uAction,int uParam,string lpvParam,int fuWinIni);
+}
+'@
+    [WallpaperHelper]::SystemParametersInfo(20, 0, $destPath, 3) | Out-Null
+    Write-Log "Achtergrond hersteld: $($wallpaper.Name)" -Level OK
+}
+
+# ─── Restore: Omgevingsvariabelen ────────────────────────────────────────────
+function Restore-EnvVars {
+    param([string]$BackupPath)
+    Update-Progress "Omgevingsvariabelen herstellen..."
+    $script = Join-Path $BackupPath "Restore-UserEnvVars.ps1"
+    if (-not (Test-Path $script)) { Write-Log "Geen omgevingsvariabelen backup" -Level WARN; return }
+    try { & $script; Write-Log "Omgevingsvariabelen hersteld" -Level OK }
+    catch { Write-Log "Omgevingsvariabelen fout: $_" -Level ERROR }
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  GUI opbouw
 # ══════════════════════════════════════════════════════════════════════════════
 
 $form                  = New-Object System.Windows.Forms.Form
 $form.Text             = "Gebruikersprofiel Migratie Tool"
-$form.Size             = New-Object System.Drawing.Size(760, 940)
+$form.Size             = New-Object System.Drawing.Size(760, 1000)
 $form.StartPosition    = "CenterScreen"
 $form.FormBorderStyle  = "FixedDialog"
 $form.MaximizeBox      = $false
@@ -716,10 +934,30 @@ $lblSubtitle.Location  = New-Object System.Drawing.Point(15, 44)
 $lblSubtitle.Size      = New-Object System.Drawing.Size(720, 18)
 $form.Controls.Add($lblSubtitle)
 
+# ─── Modus selector ───────────────────────────────────────────────────────────
+$grpMode               = New-Object System.Windows.Forms.GroupBox
+$grpMode.Text          = "Modus"
+$grpMode.Location      = New-Object System.Drawing.Point(10, 68)
+$grpMode.Size          = New-Object System.Drawing.Size(724, 48)
+$form.Controls.Add($grpMode)
+
+$rbBackup              = New-Object System.Windows.Forms.RadioButton
+$rbBackup.Text         = "Backup  (kopieer van oude computer)"
+$rbBackup.Location     = New-Object System.Drawing.Point(12, 18)
+$rbBackup.Size         = New-Object System.Drawing.Size(290, 22)
+$rbBackup.Checked      = $true
+$grpMode.Controls.Add($rbBackup)
+
+$rbRestore             = New-Object System.Windows.Forms.RadioButton
+$rbRestore.Text        = "Herstel  (zet terug op nieuwe computer)"
+$rbRestore.Location    = New-Object System.Drawing.Point(320, 18)
+$rbRestore.Size        = New-Object System.Drawing.Size(290, 22)
+$grpMode.Controls.Add($rbRestore)
+
 # ─── Bron sectie ──────────────────────────────────────────────────────────────
 $grpSource             = New-Object System.Windows.Forms.GroupBox
 $grpSource.Text        = "Bron (Oude Computer)"
-$grpSource.Location    = New-Object System.Drawing.Point(10, 68)
+$grpSource.Location    = New-Object System.Drawing.Point(10, 125)
 $grpSource.Size        = New-Object System.Drawing.Size(724, 110)
 $form.Controls.Add($grpSource)
 
@@ -798,10 +1036,108 @@ $btnTestConn.Add_Click({
 })
 $grpSource.Controls.Add($btnTestConn)
 
+# ─── Herstel bron sectie (zichtbaar in Herstel-modus) ────────────────────────
+$grpRestoreSource          = New-Object System.Windows.Forms.GroupBox
+$grpRestoreSource.Text     = "Backup bron"
+$grpRestoreSource.Location = New-Object System.Drawing.Point(10, 125)
+$grpRestoreSource.Size     = New-Object System.Drawing.Size(724, 110)
+$grpRestoreSource.Visible  = $false
+$form.Controls.Add($grpRestoreSource)
+
+$rbRestoreNetwork          = New-Object System.Windows.Forms.RadioButton
+$rbRestoreNetwork.Text     = "Netwerk share (backup stond op server):"
+$rbRestoreNetwork.Location = New-Object System.Drawing.Point(10, 22)
+$rbRestoreNetwork.Size     = New-Object System.Drawing.Size(250, 22)
+$grpRestoreSource.Controls.Add($rbRestoreNetwork)
+
+$txtRestoreNetwork         = New-Object System.Windows.Forms.TextBox
+$txtRestoreNetwork.Text    = "\\server\migratie"
+$txtRestoreNetwork.Location= New-Object System.Drawing.Point(268, 19)
+$txtRestoreNetwork.Size    = New-Object System.Drawing.Size(230, 23)
+$txtRestoreNetwork.Enabled = $false
+$grpRestoreSource.Controls.Add($txtRestoreNetwork)
+
+$btnScanBackups            = New-Object System.Windows.Forms.Button
+$btnScanBackups.Text       = "Zoek backups"
+$btnScanBackups.Location   = New-Object System.Drawing.Point(508, 18)
+$btnScanBackups.Size       = New-Object System.Drawing.Size(100, 26)
+$btnScanBackups.Enabled    = $false
+$btnScanBackups.Add_Click({
+    $basePath = $txtRestoreNetwork.Text.Trim()
+    $cboBackupFolders.Items.Clear()
+    $found = Get-ChildItem $basePath -Directory -ErrorAction SilentlyContinue |
+             Where-Object { $_.Name -match '^Migratie_' } |
+             Sort-Object LastWriteTime -Descending
+    foreach ($f in $found) { $cboBackupFolders.Items.Add($f.FullName) | Out-Null }
+    if ($cboBackupFolders.Items.Count -gt 0) {
+        $cboBackupFolders.SelectedIndex = 0
+        Write-Log "$($cboBackupFolders.Items.Count) backup(s) gevonden op $basePath" -Level OK
+    } else {
+        Write-Log "Geen backups gevonden op $basePath" -Level WARN
+    }
+})
+$grpRestoreSource.Controls.Add($btnScanBackups)
+
+$cboBackupFolders          = New-Object System.Windows.Forms.ComboBox
+$cboBackupFolders.Location = New-Object System.Drawing.Point(268, 49)
+$cboBackupFolders.Size     = New-Object System.Drawing.Size(340, 23)
+$cboBackupFolders.DropDownStyle = 'DropDownList'
+$cboBackupFolders.Enabled  = $false
+$grpRestoreSource.Controls.Add($cboBackupFolders)
+
+$rbRestoreLocal            = New-Object System.Windows.Forms.RadioButton
+$rbRestoreLocal.Text       = "Lokale map / USB:"
+$rbRestoreLocal.Checked    = $true
+$rbRestoreLocal.Location   = New-Object System.Drawing.Point(10, 79)
+$rbRestoreLocal.Size       = New-Object System.Drawing.Size(150, 22)
+$grpRestoreSource.Controls.Add($rbRestoreLocal)
+
+$txtRestorePath            = New-Object System.Windows.Forms.TextBox
+$txtRestorePath.Text       = "C:\Temp\Migratie\Migratie_..."
+$txtRestorePath.Location   = New-Object System.Drawing.Point(168, 76)
+$txtRestorePath.Size       = New-Object System.Drawing.Size(370, 23)
+$grpRestoreSource.Controls.Add($txtRestorePath)
+
+$btnBrowseRestore          = New-Object System.Windows.Forms.Button
+$btnBrowseRestore.Text     = "..."
+$btnBrowseRestore.Location = New-Object System.Drawing.Point(548, 75)
+$btnBrowseRestore.Size     = New-Object System.Drawing.Size(35, 26)
+$btnBrowseRestore.Add_Click({
+    $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
+    $fbd.Description = "Kies backup map (Migratie_... map)"
+    if ($fbd.ShowDialog() -eq 'OK') {
+        $txtRestorePath.Text = $fbd.SelectedPath
+        # Lees metadata en vul info in log
+        $meta = Read-BackupMetadata -BackupPath $fbd.SelectedPath
+        if ($meta) {
+            Write-Log "Backup van $($meta.SourceComputer) / $($meta.SourceUser) op $($meta.Date)" -Level OK
+        }
+    }
+})
+$grpRestoreSource.Controls.Add($btnBrowseRestore)
+
+# Netwerk/lokaal toggle voor restore
+$rbRestoreNetwork.Add_CheckedChanged({
+    $isNet = $rbRestoreNetwork.Checked
+    $txtRestoreNetwork.Enabled = $isNet
+    $btnScanBackups.Enabled    = $isNet
+    $cboBackupFolders.Enabled  = $isNet
+    $txtRestorePath.Enabled    = -not $isNet
+    $btnBrowseRestore.Enabled  = -not $isNet
+})
+$rbRestoreLocal.Add_CheckedChanged({
+    $isNet = $rbRestoreNetwork.Checked
+    $txtRestoreNetwork.Enabled = $isNet
+    $btnScanBackups.Enabled    = $isNet
+    $cboBackupFolders.Enabled  = $isNet
+    $txtRestorePath.Enabled    = -not $isNet
+    $btnBrowseRestore.Enabled  = -not $isNet
+})
+
 # ─── Te migreren items ────────────────────────────────────────────────────────
 $grpItems              = New-Object System.Windows.Forms.GroupBox
 $grpItems.Text         = "Te migreren items"
-$grpItems.Location     = New-Object System.Drawing.Point(10, 186)
+$grpItems.Location     = New-Object System.Drawing.Point(10, 243)
 $grpItems.Size         = New-Object System.Drawing.Size(724, 295)
 $form.Controls.Add($grpItems)
 
@@ -857,7 +1193,7 @@ $grpItems.Controls.Add($btnNone)
 # ─── Bestemming ───────────────────────────────────────────────────────────────
 $grpDest           = New-Object System.Windows.Forms.GroupBox
 $grpDest.Text      = "Backup bestemming"
-$grpDest.Location  = New-Object System.Drawing.Point(10, 489)
+$grpDest.Location  = New-Object System.Drawing.Point(10, 546)
 $grpDest.Size      = New-Object System.Drawing.Size(724, 112)
 $form.Controls.Add($grpDest)
 
@@ -901,6 +1237,26 @@ $grpDest.Controls.Add($btnBrowse)
 $rbNetwork.Add_CheckedChanged({ $txtNetworkPath.Enabled = $rbNetwork.Checked })
 $rbLocal.Add_CheckedChanged({ $txtNetworkPath.Enabled = $rbNetwork.Checked })
 
+# ─── Modus toggle handlers ────────────────────────────────────────────────────
+$rbBackup.Add_CheckedChanged({
+    if ($rbBackup.Checked) {
+        $grpSource.Visible        = $true
+        $grpDest.Visible          = $true
+        $grpRestoreSource.Visible = $false
+        $grpItems.Text            = "Te migreren items"
+        $btnStart.Text            = "Start Backup"
+    }
+})
+$rbRestore.Add_CheckedChanged({
+    if ($rbRestore.Checked) {
+        $grpSource.Visible        = $false
+        $grpDest.Visible          = $false
+        $grpRestoreSource.Visible = $true
+        $grpItems.Text            = "Te herstellen items"
+        $btnStart.Text            = "Start Herstel"
+    }
+})
+
 $chkZip            = New-Object System.Windows.Forms.CheckBox
 $chkZip.Text       = "Alles zippen na backup (handig voor transport via USB)"
 $chkZip.Location   = New-Object System.Drawing.Point(10, 80)
@@ -911,19 +1267,19 @@ $grpDest.Controls.Add($chkZip)
 # ─── Status + voortgang ───────────────────────────────────────────────────────
 $script:StatusLabel        = New-Object System.Windows.Forms.Label
 $script:StatusLabel.Text   = "Klaar om te starten..."
-$script:StatusLabel.Location = New-Object System.Drawing.Point(10, 608)
+$script:StatusLabel.Location = New-Object System.Drawing.Point(10, 665)
 $script:StatusLabel.Size   = New-Object System.Drawing.Size(724, 20)
 $form.Controls.Add($script:StatusLabel)
 
 $script:ProgressBar        = New-Object System.Windows.Forms.ProgressBar
-$script:ProgressBar.Location = New-Object System.Drawing.Point(10, 630)
+$script:ProgressBar.Location = New-Object System.Drawing.Point(10, 687)
 $script:ProgressBar.Size   = New-Object System.Drawing.Size(724, 22)
 $script:ProgressBar.Style  = "Continuous"
 $form.Controls.Add($script:ProgressBar)
 
 $script:LogBox             = New-Object System.Windows.Forms.RichTextBox
-$script:LogBox.Location    = New-Object System.Drawing.Point(10, 658)
-$script:LogBox.Size        = New-Object System.Drawing.Size(724, 190)
+$script:LogBox.Location    = New-Object System.Drawing.Point(10, 715)
+$script:LogBox.Size        = New-Object System.Drawing.Size(724, 182)
 $script:LogBox.ReadOnly    = $true
 $script:LogBox.BackColor   = [System.Drawing.Color]::FromArgb(18, 18, 18)
 $script:LogBox.ForeColor   = [System.Drawing.Color]::LightGray
@@ -933,8 +1289,8 @@ $form.Controls.Add($script:LogBox)
 
 # ─── Knoppen ──────────────────────────────────────────────────────────────────
 $btnStart             = New-Object System.Windows.Forms.Button
-$btnStart.Text        = "Start Migratie"
-$btnStart.Location    = New-Object System.Drawing.Point(10, 860)
+$btnStart.Text        = "Start Backup"
+$btnStart.Location    = New-Object System.Drawing.Point(10, 917)
 $btnStart.Size        = New-Object System.Drawing.Size(150, 40)
 $btnStart.BackColor   = [System.Drawing.Color]::FromArgb(0, 120, 212)
 $btnStart.ForeColor   = [System.Drawing.Color]::White
@@ -944,21 +1300,21 @@ $form.Controls.Add($btnStart)
 
 $btnOpenFolder        = New-Object System.Windows.Forms.Button
 $btnOpenFolder.Text   = "Open backup map"
-$btnOpenFolder.Location = New-Object System.Drawing.Point(170, 860)
+$btnOpenFolder.Location = New-Object System.Drawing.Point(170, 917)
 $btnOpenFolder.Size   = New-Object System.Drawing.Size(140, 40)
 $btnOpenFolder.Enabled= $false
 $form.Controls.Add($btnOpenFolder)
 
 $btnClearLog          = New-Object System.Windows.Forms.Button
 $btnClearLog.Text     = "Log wissen"
-$btnClearLog.Location = New-Object System.Drawing.Point(320, 860)
+$btnClearLog.Location = New-Object System.Drawing.Point(320, 917)
 $btnClearLog.Size     = New-Object System.Drawing.Size(100, 40)
 $btnClearLog.Add_Click({ $script:LogBox.Clear(); $script:LogEntries.Clear() })
 $form.Controls.Add($btnClearLog)
 
 $btnClose             = New-Object System.Windows.Forms.Button
 $btnClose.Text        = "Sluiten"
-$btnClose.Location    = New-Object System.Drawing.Point(584, 860)
+$btnClose.Location    = New-Object System.Drawing.Point(584, 917)
 $btnClose.Size        = New-Object System.Drawing.Size(150, 40)
 $btnClose.Add_Click({ Disconnect-RemoteShare; $form.Close() })
 $form.Controls.Add($btnClose)
@@ -971,6 +1327,101 @@ $btnStart.Add_Click({
     $script:LogEntries.Clear()
     $script:LogBox.Clear()
 
+    # ── HERSTEL MODUS ─────────────────────────────────────────────────────────
+    if ($rbRestore.Checked) {
+        # Bepaal backup pad
+        $backupPath = if ($rbRestoreNetwork.Checked) {
+            if ($cboBackupFolders.SelectedItem) { $cboBackupFolders.SelectedItem.ToString() } else { $null }
+        } else {
+            $txtRestorePath.Text.Trim()
+        }
+
+        if (-not $backupPath -or -not (Test-Path $backupPath)) {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Backup map niet gevonden:`n$backupPath`n`nKies een geldige backup map.",
+                "Backup map niet gevonden",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+            $btnStart.Enabled = $true
+            return
+        }
+
+        # Lees metadata (informatief)
+        $meta = Read-BackupMetadata -BackupPath $backupPath
+        if ($meta) {
+            Write-Log "Backup van $($meta.SourceComputer) / $($meta.SourceUser) ($($meta.Date))" -Level OK
+        }
+        Write-Log "Herstel gestart vanuit: $backupPath"
+
+        # Pre-flight browser check (herstel mode)
+        $browserDefs = @(
+            @{ Name='Chrome';         Process='chrome';  Selected=$checkboxes['chkChrome'].Checked }
+            @{ Name='Microsoft Edge'; Process='msedge';  Selected=$checkboxes['chkEdge'].Checked }
+            @{ Name='Firefox';        Process='firefox'; Selected=$checkboxes['chkFirefox'].Checked }
+        )
+        $openBrowsers = $browserDefs | Where-Object { $_.Selected -and (Get-Process -Name $_.Process -ErrorAction SilentlyContinue) }
+        if ($openBrowsers) {
+            $lijst = ($openBrowsers | ForEach-Object { "  - $($_.Name)" }) -join "`n"
+            $ans = [System.Windows.Forms.MessageBox]::Show(
+                "Open browsers gevonden:`n$lijst`n`nAutomatisch sluiten?",
+                "Open browsers", [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+                [System.Windows.Forms.MessageBoxIcon]::Warning)
+            if ($ans -eq [System.Windows.Forms.DialogResult]::No) { $btnStart.Enabled = $true; return }
+            if ($ans -eq [System.Windows.Forms.DialogResult]::Yes) {
+                foreach ($b in $openBrowsers) {
+                    Get-Process -Name $b.Process -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+                    Start-Sleep -Milliseconds 600
+                    [System.Windows.Forms.Application]::DoEvents()
+                }
+            }
+        }
+
+        $selectedChecks     = $checkboxes.Values | Where-Object { $_.Checked }
+        $script:TotalSteps  = $selectedChecks.Count + 1
+        $script:CurrentStep = 0
+
+        try {
+            if ($checkboxes['chkPrinters'].Checked)    { Restore-Printers          -BackupPath $backupPath }
+            if ($checkboxes['chkChrome'].Checked)      { Restore-BrowserProfile    -BackupPath $backupPath -Browser 'Chrome' }
+            if ($checkboxes['chkEdge'].Checked)        { Restore-BrowserProfile    -BackupPath $backupPath -Browser 'Edge' }
+            if ($checkboxes['chkFirefox'].Checked)     { Restore-BrowserProfile    -BackupPath $backupPath -Browser 'Firefox' }
+            if ($checkboxes['chkOutlookSig'].Checked)  { Restore-OutlookSignatures -BackupPath $backupPath }
+            if ($checkboxes['chkOutlookPST'].Checked)  { Restore-OutlookPST        -BackupPath $backupPath }
+
+            $folders = @()
+            if ($checkboxes['chkDesktop'].Checked)   { $folders += 'Desktop' }
+            if ($checkboxes['chkDocuments'].Checked) { $folders += 'Documents' }
+            if ($checkboxes['chkDownloads'].Checked) { $folders += 'Downloads' }
+            if ($checkboxes['chkPictures'].Checked)  { $folders += 'Pictures' }
+            if ($checkboxes['chkMusic'].Checked)     { $folders += 'Music' }
+            if ($checkboxes['chkVideos'].Checked)    { $folders += 'Videos' }
+            if ($folders.Count -gt 0) { Restore-UserFolders -BackupPath $backupPath -Folders $folders }
+
+            if ($checkboxes['chkMappedDrives'].Checked) { Restore-MappedDrives -BackupPath $backupPath }
+            if ($checkboxes['chkWiFi'].Checked)          { Restore-WiFiProfiles -BackupPath $backupPath }
+            if ($checkboxes['chkStickyNotes'].Checked)   { Restore-StickyNotes  -BackupPath $backupPath }
+            if ($checkboxes['chkWallpaper'].Checked)     { Restore-Wallpaper    -BackupPath $backupPath }
+            if ($checkboxes['chkEnvVars'].Checked)       { Restore-EnvVars      -BackupPath $backupPath }
+
+            $script:ProgressBar.Value = 100
+            $script:StatusLabel.Text  = "Herstel voltooid!"
+            $errors   = ($script:LogEntries | Where-Object { $_ -match '\[ERROR\]' }).Count
+            $warnings = ($script:LogEntries | Where-Object { $_ -match '\[WARN\]'  }).Count
+            Write-Log "=== HERSTEL VOLTOOID (fouten: $errors, waarschuwingen: $warnings) ===" -Level OK
+            [System.Windows.Forms.MessageBox]::Show(
+                "Herstel voltooid!`n`nFouten: $errors`nWaarschuwingen: $warnings",
+                "Herstel Voltooid",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        } catch {
+            Write-Log "Onverwachte fout bij herstel: $_" -Level ERROR
+        } finally {
+            $btnStart.Enabled = $true
+        }
+        return
+    }
+
+    # ── BACKUP MODUS ──────────────────────────────────────────────────────────
     $sourceComputer = $txtComputer.Text.Trim()
     $sourceUser     = $txtUser.Text.Trim()
     $isLocal        = ($sourceComputer -ieq $env:COMPUTERNAME)
@@ -1043,6 +1494,12 @@ $btnStart.Add_Click({
         $btnStart.Enabled = $true
         return
     }
+
+    # Sla metadata op zodat herstel de backup locatie kan herkennen
+    $destType   = if ($rbNetwork.Checked) { 'network' } else { 'local' }
+    $netBase    = if ($rbNetwork.Checked) { $txtNetworkPath.Text.Trim() } else { '' }
+    Save-BackupMetadata -BackupPath $script:BackupRoot -SourceComputer $sourceComputer `
+                        -SourceUser $sourceUser -DestType $destType -NetworkBase $netBase
 
     # Verbind remote share indien nodig
     $sourceUserFolder = $null
@@ -1135,13 +1592,13 @@ $btnStart.Add_Click({
 
         # Rapport genereren
         Update-Progress "Migratierapport genereren..."
-        $reportPath = New-MigrationReport -BackupPath $script:BackupRoot
+        New-MigrationReport -BackupPath $script:BackupRoot | Out-Null
 
         $script:ProgressBar.Value = 100
         $script:StatusLabel.Text  = "Migratie voltooid!"
 
-        $errors   = ($script:LogEntries | Where-Object { $_ -like '*[ERROR]*' }).Count
-        $warnings = ($script:LogEntries | Where-Object { $_ -like '*[WARN]*' }).Count
+        $errors   = ($script:LogEntries | Where-Object { $_ -match '\[ERROR\]' }).Count
+        $warnings = ($script:LogEntries | Where-Object { $_ -match '\[WARN\]'  }).Count
 
         Write-Log "=== MIGRATIE VOLTOOID (fouten: $errors, waarschuwingen: $warnings) ===" -Level OK
 
@@ -1171,5 +1628,5 @@ $btnStart.Add_Click({
 })
 
 # ─── Toon formulier ───────────────────────────────────────────────────────────
-Write-Log "Tool geladen. Vul broncomputer en gebruiker in, kies items en klik 'Start Migratie'."
+Write-Log "Tool geladen. Kies modus (Backup of Herstel) en klik 'Start Backup' of 'Start Herstel'."
 $form.ShowDialog() | Out-Null
