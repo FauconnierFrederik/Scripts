@@ -26,6 +26,7 @@ This downloads all scripts to `C:\Scripts\batch\` and launches the menu automati
 | **Launch-WinUtil** | Launches Chris Titus Tech's WinUtil — software install, Windows tweaks and repairs (requires internet) |
 | **Clear-DiskSpace** | Safely frees disk space by removing temp files, logs and caches. Option to schedule weekly. |
 | **Get-ServerHealth** | Checks CPU, RAM, disks, services and event log. Exports color-coded HTML report. |
+| **Migrate-UserProfile** | GUI tool to migrate user profiles to a new PC: printers (PrintBrm), Chrome/Edge/Firefox, user folders, Outlook signatures + PST, mapped drives, WiFi profiles, Sticky Notes, wallpaper and environment variables. Supports remote source via C$ share or local ZIP. |
 
 ## Requirements
 

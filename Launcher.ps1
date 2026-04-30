@@ -79,6 +79,12 @@ $Scripts = @(
         Path        = "$ScriptBase\Get-ServerHealth.ps1"
     }
 
+    @{
+        Name        = "Migratie - Gebruikersprofiel naar nieuwe computer"
+        Description = "GUI tool: migreert printers, browsers, bestanden, WiFi, Outlook, mapped drives en meer via C$ of lokaal."
+        Path        = "$ScriptBase\Migrate-UserProfile.ps1"
+    }
+
     # ── Voeg hier nieuwe scripts toe ──────────────────────────
 
     # @{
