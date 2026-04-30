@@ -294,7 +294,7 @@ function Backup-UserFolders {
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
 
         try {
-            & robocopy $src $dest /E /COPYALL /XA:ST /R:1 /W:1 /NP /MT:8 | Out-Null
+            & robocopy $src $dest /E /COPYALL /XA:ST /XJ /R:1 /W:1 /NP /MT:8 | Out-Null
             $exitCode = $LASTEXITCODE
             if ($exitCode -le 7) {
                 $items = (Get-ChildItem $dest -Recurse -File -ErrorAction SilentlyContinue).Count
@@ -1002,7 +1002,7 @@ $btnStart.Add_Click({
         if ($chkZip.Checked) {
             Update-Progress "Alles zippen naar ZIP bestand..."
             $zipPath = "$($script:BackupRoot).zip"
-            Compress-Archive -Path "$($script:BackupRoot)\*" -DestinationPath $zipPath -Force
+            Compress-Archive -Path "$($script:BackupRoot)\*" -DestinationPath $zipPath -Force -ErrorAction SilentlyContinue
             $zipMB = [Math]::Round((Get-Item $zipPath).Length / 1MB, 0)
             Write-Log "Alles gezipt: $zipPath ($zipMB MB)" -Level OK
         }
