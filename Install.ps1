@@ -20,6 +20,7 @@ $Scripts = @(
     "Launch-WinUtil.ps1"
     "Clear-DiskSpace.ps1"
     "Get-ServerHealth.ps1"
+    "Migrate-UserProfile.ps1"
 )
 
 Write-Host ""
