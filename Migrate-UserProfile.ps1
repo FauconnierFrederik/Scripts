@@ -240,6 +240,21 @@ function Backup-EdgeProfile {
     param([string]$BackupPath, [string]$SourceUserFolder)
     Update-Progress "Edge profiel backuppen..."
 
+    # Waarschuw als Edge open staat (vergrendelde bestanden breken de zip)
+    $edgeProcs = Get-Process -Name 'msedge' -ErrorAction SilentlyContinue
+    if ($edgeProcs) {
+        $ans = [System.Windows.Forms.MessageBox]::Show(
+            "Microsoft Edge staat open. Bestanden zijn vergrendeld en de backup kan mislukken.`n`nSluit Edge nu en klik OK om door te gaan, of klik Annuleer om Edge backup over te slaan.",
+            "Edge is open",
+            [System.Windows.Forms.MessageBoxButtons]::OKCancel,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        )
+        if ($ans -eq [System.Windows.Forms.DialogResult]::Cancel) {
+            Write-Log "Edge backup overgeslagen (Edge stond open)" -Level WARN
+            return
+        }
+    }
+
     $edgeSrc = Join-Path $SourceUserFolder "AppData\Local\Microsoft\Edge\User Data"
     if (-not (Test-Path $edgeSrc)) { Write-Log "Edge profiel niet gevonden" -Level WARN; return }
 
@@ -251,9 +266,13 @@ function Backup-EdgeProfile {
         $robocopyArgs = @($edgeSrc, $tempDir, '/E', '/XD') + $excludeDirs +
                         @('/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
         & robocopy @robocopyArgs | Out-Null
-        Compress-Archive -Path "$tempDir\*" -DestinationPath $zipDest -Force
-        $size = [Math]::Round((Get-Item $zipDest).Length / 1MB, 1)
-        Write-Log "Edge profiel gezipt: $zipDest ($size MB)" -Level OK
+        Compress-Archive -Path "$tempDir\*" -DestinationPath $zipDest -Force -ErrorAction SilentlyContinue
+        if (Test-Path $zipDest) {
+            $size = [Math]::Round((Get-Item $zipDest).Length / 1MB, 1)
+            Write-Log "Edge profiel gezipt: $zipDest ($size MB)" -Level OK
+        } else {
+            Write-Log "Edge zip mislukt - sluit Edge en probeer opnieuw" -Level ERROR
+        }
     } catch {
         Write-Log "Edge backup fout: $_" -Level ERROR
     } finally {
@@ -293,12 +312,36 @@ function Backup-UserFolders {
         $dest = Join-Path $BackupPath "UserData\$folder"
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
 
+        # Detecteer OneDrive-redirectie (reparse point of lege map met cloud-only bestanden)
+        $oneDriveRedirected = $false
+        try {
+            $dirInfo = New-Object System.IO.DirectoryInfo($src)
+            if ($dirInfo.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                $oneDriveRedirected = $true
+            }
+        } catch {}
+
+        # Tel cloud-only OneDrive bestanden (hebben offline attribuut NIET gezet)
+        $cloudOnlyCount = 0
+        try {
+            $allFiles = Get-ChildItem $src -Recurse -File -ErrorAction SilentlyContinue
+            $cloudOnlyCount = ($allFiles | Where-Object {
+                $_.Attributes -band [System.IO.FileAttributes]::Offline
+            }).Count
+        } catch {}
+
         try {
             & robocopy $src $dest /E /COPYALL /XA:ST /XJ /R:1 /W:1 /NP /MT:8 | Out-Null
             $exitCode = $LASTEXITCODE
             if ($exitCode -le 7) {
                 $items = (Get-ChildItem $dest -Recurse -File -ErrorAction SilentlyContinue).Count
-                Write-Log "$folder gekopieerd ($items bestanden)" -Level OK
+                if ($cloudOnlyCount -gt 0 -or ($items -eq 0 -and $oneDriveRedirected)) {
+                    Write-Log "$folder gekopieerd ($items lokale bestanden) - WAARSCHUWING: $cloudOnlyCount cloud-only OneDrive bestanden NIET gekopieerd. Download eerst via OneDrive." -Level WARN
+                } elseif ($items -eq 0) {
+                    Write-Log "$folder gekopieerd (map leeg of alles in OneDrive cloud)" -Level WARN
+                } else {
+                    Write-Log "$folder gekopieerd ($items bestanden)" -Level OK
+                }
             } else {
                 Write-Log "$folder gedeeltelijk gekopieerd (robocopy exit: $exitCode)" -Level WARN
             }
@@ -541,8 +584,8 @@ function New-MigrationReport {
     param([string]$BackupPath)
     $reportPath = Join-Path $BackupPath "MIGRATIE_RAPPORT.txt"
 
-    $errors   = ($script:LogEntries | Where-Object { $_ -like '*[ERROR]*' }).Count
-    $warnings = ($script:LogEntries | Where-Object { $_ -like '*[WARN]*' }).Count
+    $errors   = ($script:LogEntries | Where-Object { $_ -match '\[ERROR\]' }).Count
+    $warnings = ($script:LogEntries | Where-Object { $_ -match '\[WARN\]' }).Count
 
     $content = @"
 ========================================================
