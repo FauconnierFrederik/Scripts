@@ -274,21 +274,6 @@ function Backup-EdgeProfile {
     param([string]$BackupPath, [string]$SourceUserFolder)
     Update-Progress "Edge profiel backuppen..."
 
-    # Waarschuw als Edge open staat (vergrendelde bestanden breken de zip)
-    $edgeProcs = Get-Process -Name 'msedge' -ErrorAction SilentlyContinue
-    if ($edgeProcs) {
-        $ans = [System.Windows.Forms.MessageBox]::Show(
-            "Microsoft Edge staat open. Bestanden zijn vergrendeld en de backup kan mislukken.`n`nSluit Edge nu en klik OK om door te gaan, of klik Annuleer om Edge backup over te slaan.",
-            "Edge is open",
-            [System.Windows.Forms.MessageBoxButtons]::OKCancel,
-            [System.Windows.Forms.MessageBoxIcon]::Warning
-        )
-        if ($ans -eq [System.Windows.Forms.DialogResult]::Cancel) {
-            Write-Log "Edge backup overgeslagen (Edge stond open)" -Level WARN
-            return
-        }
-    }
-
     $edgeSrc = Join-Path $SourceUserFolder "AppData\Local\Microsoft\Edge\User Data"
     if (-not (Test-Path $edgeSrc)) { Write-Log "Edge profiel niet gevonden" -Level WARN; return }
 
@@ -989,6 +974,52 @@ $btnStart.Add_Click({
     $sourceComputer = $txtComputer.Text.Trim()
     $sourceUser     = $txtUser.Text.Trim()
     $isLocal        = ($sourceComputer -ieq $env:COMPUTERNAME)
+
+    # ── Pre-flight: controleer open browsers ──────────────────────────────────
+    $browserDefs = @(
+        @{ Name = 'Chrome';          Process = 'chrome';   Selected = $checkboxes['chkChrome'].Checked }
+        @{ Name = 'Microsoft Edge';  Process = 'msedge';   Selected = $checkboxes['chkEdge'].Checked }
+        @{ Name = 'Firefox';         Process = 'firefox';  Selected = $checkboxes['chkFirefox'].Checked }
+    )
+
+    $openBrowsers = $browserDefs | Where-Object {
+        (Get-Process -Name $_.Process -ErrorAction SilentlyContinue) -ne $null
+    }
+
+    if ($openBrowsers) {
+        $lijst = ($openBrowsers | ForEach-Object { "  - $($_.Name)" }) -join "`n"
+        $ans = [System.Windows.Forms.MessageBox]::Show(
+            "De volgende browsers zijn nog geopend:`n$lijst`n`n" +
+            "Open browsers kunnen bestanden vergrendelen waardoor de backup mislukt.`n`n" +
+            "Klik 'Ja' om ze automatisch te sluiten en door te gaan.`n" +
+            "Klik 'Nee' om ze manueel te sluiten (migratie stopt).`n" +
+            "Klik 'Annuleer' om toch door te gaan zonder sluiten (risico op fouten).",
+            "Open browsers gedetecteerd",
+            [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        )
+
+        if ($ans -eq [System.Windows.Forms.DialogResult]::No) {
+            $btnStart.Enabled = $true
+            return
+        }
+
+        if ($ans -eq [System.Windows.Forms.DialogResult]::Yes) {
+            foreach ($b in $openBrowsers) {
+                Write-Log "$($b.Name) afsluiten..."
+                Get-Process -Name $b.Process -ErrorAction SilentlyContinue |
+                    Stop-Process -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Milliseconds 800
+                [System.Windows.Forms.Application]::DoEvents()
+                if (Get-Process -Name $b.Process -ErrorAction SilentlyContinue) {
+                    Write-Log "$($b.Name) kon niet afgesloten worden" -Level WARN
+                } else {
+                    Write-Log "$($b.Name) afgesloten" -Level OK
+                }
+            }
+        }
+        # Annuleer = doorgaan zonder sluiten
+    }
 
     # Bepaal backup map
     $timestamp  = Get-Date -Format 'yyyyMMdd_HHmmss'
