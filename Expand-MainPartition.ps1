@@ -23,7 +23,7 @@ function Write-Err     { param([string]$Msg) Write-Host "    [!!] $Msg" -Foregro
 function Invoke-Diskpart {
     param([string[]]$Regels)
     $tmp = [System.IO.Path]::Combine($env:TEMP, "dp_$(Get-Random).txt")
-    [System.IO.File]::WriteAllLines($tmp, $Regels, [System.Text.Encoding]::ASCII)
+    $Regels | Out-File -FilePath $tmp -Encoding ASCII -Force
     $output = & diskpart.exe /s $tmp 2>&1
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
     return $output
@@ -87,7 +87,6 @@ $vrijMB      = [math]::Round($vrijSpace / 1MB, 0)
 
 $form                 = New-Object System.Windows.Forms.Form
 $form.Text            = "Hoofdpartitie uitbreiden"
-$form.Size            = New-Object System.Drawing.Size(510, 420)
 $form.StartPosition   = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox     = $false
@@ -167,7 +166,8 @@ $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 $form.Controls.AddRange(@($btnOK, $btnCancel))
 $form.AcceptButton = $btnOK
 $form.CancelButton = $btnCancel
-$form.ClientSize   = New-Object System.Drawing.Size(510, $y + 50)
+[int]$formH        = $y + 50
+$form.ClientSize   = New-Object System.Drawing.Size(510, $formH)
 
 if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
     Write-Host "`n  Geannuleerd." -ForegroundColor Yellow
