@@ -202,7 +202,29 @@ if (-not (Test-Path $winrePad)) {
 }
 Write-Success "WinRE uitgeschakeld — winre.wim veilig op $winrePad"
 
-# Stap 2 — Recovery partitie verwijderen
+# Stap 2 — Recovery partitie verwijderen (bevestiging)
+$partOffset = [math]::Round($recoveryPart.Offset / 1GB, 2)
+$bevestig = [System.Windows.Forms.MessageBox]::Show(
+    "Bevestig verwijderen van de volgende partitie:`n`n" +
+    "  Schijf       : $diskNum  ($($disk.FriendlyName))`n" +
+    "  Partitie nr  : $($recoveryPart.PartitionNumber)`n" +
+    "  Grootte      : $recoveryMB MB`n" +
+    "  Offset       : $partOffset GB`n" +
+    "  GPT-type     : $recoveryGuid`n`n" +
+    "WinRE is uitgeschakeld en winre.wim staat veilig op:`n  $winrePad`n`n" +
+    "Na verwijderen wordt C: uitgebreid en de partitie herschapen.",
+    "Partitie verwijderen bevestigen",
+    "YesNo",
+    "Warning"
+)
+
+if ($bevestig -ne [System.Windows.Forms.DialogResult]::Yes) {
+    Write-Warn "Geannuleerd door gebruiker — WinRE heractiveren..."
+    & reagentc.exe /enable 2>&1 | Out-Null
+    Write-Warn "WinRE heractiveerd. Geen wijzigingen aan schijfindeling."
+    exit
+}
+
 Write-Step "Recovery partitie verwijderen (partitie $($recoveryPart.PartitionNumber))..."
 Invoke-Diskpart @(
     "select disk $diskNum"
