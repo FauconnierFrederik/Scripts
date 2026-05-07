@@ -478,7 +478,8 @@ if ($modus -eq "Herstel") {
         exit
     }
 
-    $wimGrootteMB = [math]::Round((Get-Item $winrePad).Length / 1MB, 0)
+    $wimItem      = Get-Item $winrePad -Force -ErrorAction SilentlyContinue
+    $wimGrootteMB = if ($wimItem) { [math]::Round($wimItem.Length / 1MB, 0) } else { 0 }
 
     # Check bestaande recovery partitie
     $bestaandeRecovery = Get-Partition -DiskNumber $diskNum -ErrorAction SilentlyContinue |
@@ -513,7 +514,7 @@ if ($modus -eq "Herstel") {
     }
 
     # Bepaal recovery grootte: winre.wim + 150 MB buffer, afgerond naar boven per 50 MB, min 500 MB
-    $herstelMB = [math]::Max(500, [math]::Ceiling(($wimGrootteMB + 150) / 50) * 50)
+    $herstelMB = [math]::Max(1024, [math]::Ceiling(($wimGrootteMB + 300) / 50) * 50)
 
     # Unallocated space check
     $disk      = Get-Disk -Number $diskNum -ErrorAction Stop
