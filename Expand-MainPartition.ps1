@@ -248,13 +248,20 @@ if ($controle) {
 }
 Write-Success "Recovery partitie verwijderd"
 
-# Stap 3 — C: uitbreiden
-Write-Step "C: uitbreiden naar maximum..."
+# Stap 3 — C: uitbreiden (recovery ruimte reserveren)
+Write-Step "C: uitbreiden (${recoveryMB} MB gereserveerd voor recovery)..."
 try {
-    $maxSize = (Get-PartitionSupportedSize -DriveLetter C -ErrorAction Stop).SizeMax
-    Resize-Partition -DriveLetter C -Size $maxSize -ErrorAction Stop
-    $nieuweC = [math]::Round((Get-Partition -DriveLetter C).Size / 1GB, 1)
-    Write-Success "C: uitgebreid naar $nieuweC GB"
+    $maxSize    = (Get-PartitionSupportedSize -DriveLetter C -ErrorAction Stop).SizeMax
+    $reserveer  = [int64]$recoveryMB * 1MB   # zelfde waarde als diskpart create gebruikt
+    $targetSize = $maxSize - $reserveer
+    if ($targetSize -le $cPart.Size) {
+        Write-Err "Berekende doelgrootte ($([math]::Round($targetSize/1GB,1)) GB) is niet groter dan huidig ($cGrootteGB GB) — afgebroken."
+        $foutStap = "C: uitbreiden"
+    } else {
+        Resize-Partition -DriveLetter C -Size $targetSize -ErrorAction Stop
+        $nieuweC = [math]::Round((Get-Partition -DriveLetter C).Size / 1GB, 1)
+        Write-Success "C: uitgebreid naar $nieuweC GB ($recoveryMB MB vrij voor recovery)"
+    }
 } catch {
     Write-Err "Uitbreiden mislukt: $_"
     $foutStap = "C: uitbreiden"
