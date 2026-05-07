@@ -486,7 +486,7 @@ if ($modus -eq "Herstel") {
 
     if ($bestaandeRecovery) {
         $antw = [System.Windows.Forms.MessageBox]::Show(
-            "Er bestaat al een recovery partitie op schijf $diskNum:`n`n" +
+            "Er bestaat al een recovery partitie op schijf $($diskNum):`n`n" +
             "  Partitie nr  : $($bestaandeRecovery.PartitionNumber)`n" +
             "  Grootte      : $([math]::Round($bestaandeRecovery.Size/1MB,0)) MB`n`n" +
             "Wil je alleen WinRE heractiveren (reagentc /enable) zonder nieuwe partitie aan te maken?",
