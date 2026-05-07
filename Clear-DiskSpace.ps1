@@ -276,11 +276,26 @@ function Invoke-Cleanup {
 
     if ($Keuzes["Bin"]) {
         Write-Step "Prullenbak leegmaken..."
-        try {
-            Clear-RecycleBin -Force -ErrorAction Stop
-            Write-Success "Prullenbak geleegd"
-        } catch {
-            Write-Warn "Prullenbak al leeg of geen toegang."
+        $binPad = "C:\`$Recycle.Bin"
+        $voor   = Get-FolderSizeMB $binPad
+
+        # Huidige gebruiker via WinAPI
+        Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+
+        # Alle gebruikers-SID-mappen direct leegmaken (vereist admin)
+        if (Test-Path $binPad) {
+            Get-ChildItem $binPad -Force -ErrorAction SilentlyContinue |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        $na = Get-FolderSizeMB $binPad
+        $v  = [math]::Round($voor - $na, 1)
+        $totaalVrij += $v
+
+        if ($voor -eq 0) {
+            Write-Success "Prullenbak was al leeg"
+        } else {
+            Write-Success "$v MB vrijgemaakt (was $voor MB)"
         }
     }
 
