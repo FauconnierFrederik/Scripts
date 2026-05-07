@@ -85,6 +85,12 @@ $Scripts = @(
         Path        = "$ScriptBase\Migrate-UserProfile.ps1"
     }
 
+    @{
+        Name        = "Schijf - Hoofdpartitie uitbreiden"
+        Description = "Verwijdert tijdelijk de recovery partitie, breidt C: uit met unallocated space, zet recovery terug. Geen reboot nodig."
+        Path        = "$ScriptBase\Expand-MainPartition.ps1"
+    }
+
     # ── Voeg hier nieuwe scripts toe ──────────────────────────
 
     # @{

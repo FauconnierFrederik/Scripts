@@ -21,6 +21,7 @@ $Scripts = @(
     "Clear-DiskSpace.ps1"
     "Get-ServerHealth.ps1"
     "Migrate-UserProfile.ps1"
+    "Expand-MainPartition.ps1"
 )
 
 Write-Host ""
