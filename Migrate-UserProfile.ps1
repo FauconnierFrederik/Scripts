@@ -1434,7 +1434,7 @@ $btnStart.Add_Click({
     )
 
     $openBrowsers = $browserDefs | Where-Object {
-        (Get-Process -Name $_.Process -ErrorAction SilentlyContinue) -ne $null
+        $_.Selected -and (Get-Process -Name $_.Process -ErrorAction SilentlyContinue) -ne $null
     }
 
     if ($openBrowsers) {
