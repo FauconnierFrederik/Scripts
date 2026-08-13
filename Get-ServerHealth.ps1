@@ -70,6 +70,41 @@ function Get-StatusKleur {
     }
 }
 
+function Format-EventTime {
+    param(
+        [AllowNull()][object]$TimeCreated,
+        [string]$Format = "dd/MM HH:mm"
+    )
+
+    if ($null -eq $TimeCreated) { return "Onbekend" }
+    return ([datetime]$TimeCreated).ToString($Format)
+}
+
+function Format-EventMessage {
+    param(
+        [AllowNull()][string]$Message,
+        [switch]$SingleLine,
+        [int]$MaxLength = 0,
+        [switch]$Html
+    )
+
+    $tekst = if ([string]::IsNullOrWhiteSpace($Message)) {
+        "(Geen bericht beschikbaar)"
+    } else {
+        $Message
+    }
+
+    if ($SingleLine) { $tekst = ($tekst -split "\r?\n", 2)[0] }
+    if ($MaxLength -gt 0 -and $tekst.Length -gt $MaxLength) {
+        $tekst = $tekst.Substring(0, $MaxLength)
+    }
+    if ($Html) {
+        $tekst = $tekst -replace "&", "&amp;" -replace "<", "&lt;" -replace ">", "&gt;" -replace "`r`n|`n|`r", "<br>"
+    }
+
+    return $tekst
+}
+
 # ------------------------------------------------------------
 #  HEADER
 # ------------------------------------------------------------
@@ -202,8 +237,9 @@ if (-not $events -or $events.Count -eq 0) {
     $events | Select-Object -First 5 | ForEach-Object {
         $lvl   = if ($_.Level -eq 1) { "[KRIT]" } else { "[FOUT]" }
         $kleur = if ($_.Level -eq 1) { "Red" } else { "Yellow" }
-        $tijd  = $_.TimeCreated.ToString("dd/MM HH:mm")
-        Write-Host "      $lvl $tijd  $($_.ProviderName): $($_.Message.Split("`n")[0].Substring(0, [math]::Min(80, $_.Message.Length)))" -ForegroundColor $kleur
+        $tijd    = Format-EventTime $_.TimeCreated
+        $bericht = Format-EventMessage $_.Message -SingleLine -MaxLength 80
+        Write-Host "      $lvl $tijd  $($_.ProviderName): $bericht" -ForegroundColor $kleur
     }
 }
 
@@ -258,8 +294,8 @@ if ($exporteren -eq "Yes") {
         $eventRijen = ($events | ForEach-Object {
             $lvlTekst  = if ($_.Level -eq 1) { "Kritiek" } else { "Fout" }
             $lvlKleur  = if ($_.Level -eq 1) { "#e74c3c" } else { "#f39c12" }
-            $tijd      = $_.TimeCreated.ToString("dd/MM/yyyy HH:mm:ss")
-            $bericht   = $_.Message -replace "&","&amp;" -replace "<","&lt;" -replace ">","&gt;" -replace "`n","<br>"
+            $tijd      = Format-EventTime $_.TimeCreated -Format "dd/MM/yyyy HH:mm:ss"
+            $bericht   = Format-EventMessage $_.Message -Html
             "<tr>
                 <td style='color:$lvlKleur;font-weight:bold;white-space:nowrap'>$lvlTekst</td>
                 <td style='white-space:nowrap'>$tijd</td>
