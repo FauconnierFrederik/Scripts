@@ -2,7 +2,7 @@
 # ============================================================
 #  Get-ServerHealth.ps1
 #  Geeft een snel overzicht van de gezondheid van de server:
-#  CPU, geheugen, schijven, services en recente fouten.
+#  CPU, geheugen, schijven, services, recente fouten en aanmeldingsbeveiliging.
 #  Optioneel: exporteer rapport als HTML.
 # ============================================================
 
@@ -16,6 +16,10 @@ $DrempelRAM       = 85   # % - waarschuwing boven deze waarde
 $DrempelSchijfWarn = 20  # % vrij - waarschuwing onder deze waarde
 $DrempelSchijfKrit = 10  # % vrij - kritiek onder deze waarde
 $EventLogUren     = 24   # uur terug voor event log analyse
+$AanmeldLogUren   = 24   # uur terug voor aanmeldingsanalyse
+$DrempelLoginWarn = 5    # waarschuwing vanaf dit aantal mislukte pogingen
+$DrempelLoginKrit = 20   # kritiek vanaf dit aantal mislukte pogingen
+$MaxAanmeldEvents = 2000 # maximum aantal Security-events om te analyseren
 
 $KritiekeSvcs = @(
     "EventLog",
@@ -103,6 +107,193 @@ function Format-EventMessage {
     }
 
     return $tekst
+}
+
+function ConvertTo-HtmlText {
+    param([AllowNull()][object]$Value)
+    return [System.Net.WebUtility]::HtmlEncode([string]$Value)
+}
+
+function ConvertFrom-SecurityEvent {
+    param([Parameter(Mandatory)][object]$EventRecord)
+
+    try {
+        [xml]$xml = $EventRecord.ToXml()
+    } catch {
+        return $null
+    }
+
+    $data = @{}
+    foreach ($node in @($xml.SelectNodes("//*[local-name()='EventData']/*[local-name()='Data']"))) {
+        $name = [string]$node.GetAttribute("Name")
+        if ($name) { $data[$name] = [string]$node.InnerText }
+    }
+
+    $isPrivilegeEvent = [int]$EventRecord.Id -eq 4672
+    $logonType = 0
+    [void][int]::TryParse([string]$data["LogonType"], [ref]$logonType)
+
+    [pscustomobject]@{
+        Id          = [int]$EventRecord.Id
+        TimeCreated = $EventRecord.TimeCreated
+        Account     = if ($isPrivilegeEvent) { $data["SubjectUserName"] } else { $data["TargetUserName"] }
+        Domain      = if ($isPrivilegeEvent) { $data["SubjectDomainName"] } else { $data["TargetDomainName"] }
+        LogonType   = $logonType
+        IpAddress   = $data["IpAddress"]
+        Workstation = $data["WorkstationName"]
+        LogonId     = if ($isPrivilegeEvent) { $data["SubjectLogonId"] } else { $data["TargetLogonId"] }
+        Elevated    = $data["ElevatedToken"]
+        Privileges  = $data["PrivilegeList"]
+        Status      = $data["Status"]
+        SubStatus   = $data["SubStatus"]
+    }
+}
+
+function Test-IsPublicIPAddress {
+    param([AllowNull()][string]$Address)
+
+    $ip = $null
+    if (-not [System.Net.IPAddress]::TryParse($Address, [ref]$ip)) { return $false }
+    if ([System.Net.IPAddress]::IsLoopback($ip)) { return $false }
+    if ($ip.IsIPv4MappedToIPv6) { $ip = $ip.MapToIPv4() }
+
+    if ($ip.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        $bytes = $ip.GetAddressBytes()
+        if ($bytes[0] -in 0, 10, 127) { return $false }
+        if ($bytes[0] -eq 100 -and $bytes[1] -ge 64 -and $bytes[1] -le 127) { return $false }
+        if ($bytes[0] -eq 169 -and $bytes[1] -eq 254) { return $false }
+        if ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) { return $false }
+        if ($bytes[0] -eq 192 -and $bytes[1] -eq 168) { return $false }
+        if ($bytes[0] -ge 224) { return $false }
+        return $true
+    }
+
+    $bytes = $ip.GetAddressBytes()
+    if ($ip.IsIPv6LinkLocal -or $ip.IsIPv6Multicast -or $ip.IsIPv6SiteLocal) { return $false }
+    if (($bytes[0] -band 0xFE) -eq 0xFC) { return $false }
+    return $true
+}
+
+function Test-IsSystemSecurityAccount {
+    param(
+        [AllowNull()][string]$Account,
+        [AllowNull()][string]$Domain
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Account)) { return $true }
+    if ($Account.EndsWith("$")) { return $true }
+
+    $accountUpper = $Account.ToUpperInvariant()
+    $identity = "$Domain\$Account".ToUpperInvariant()
+    return $identity -in @(
+        "NT AUTHORITY\SYSTEM",
+        "NT AUTHORITY\LOCAL SERVICE",
+        "NT AUTHORITY\NETWORK SERVICE"
+    ) -or $accountUpper -in @("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE")
+}
+
+function Get-FailedLogonFindings {
+    param(
+        [array]$Events,
+        [int]$WarnThreshold = 5,
+        [int]$CriticalThreshold = 20
+    )
+
+    $groups = @()
+    $groups += @($Events | Where-Object {
+        $_.Id -eq 4625 -and [System.Net.IPAddress]::TryParse([string]$_.IpAddress, [ref]([System.Net.IPAddress]$null))
+    } | Group-Object IpAddress | ForEach-Object {
+        [pscustomobject]@{ Kind = "Bron-IP"; Value = $_.Name; Count = $_.Count }
+    })
+    $groups += @($Events | Where-Object {
+        $_.Id -eq 4625 -and -not [string]::IsNullOrWhiteSpace([string]$_.Account) -and $_.Account -ne "-"
+    } | Group-Object Account | ForEach-Object {
+        [pscustomobject]@{ Kind = "Account"; Value = $_.Name; Count = $_.Count }
+    })
+
+    @($groups | Where-Object { $_.Count -ge $WarnThreshold } | ForEach-Object {
+        [pscustomobject]@{
+            Kind   = $_.Kind
+            Value  = $_.Value
+            Count  = $_.Count
+            Status = if ($_.Count -ge $CriticalThreshold) { "KRIT" } else { "WARN" }
+        }
+    } | Sort-Object @{ Expression = "Count"; Descending = $true }, Kind, Value)
+}
+
+function Get-LogonSecurityAnalysis {
+    param(
+        [array]$Events,
+        [int]$WarnThreshold = 5,
+        [int]$CriticalThreshold = 20
+    )
+
+    $sessionsByLogonId = @{}
+    foreach ($session in @($Events | Where-Object { $_.Id -eq 4624 -and -not [string]::IsNullOrWhiteSpace([string]$_.LogonId) })) {
+        if (-not $sessionsByLogonId.ContainsKey([string]$session.LogonId)) {
+            $sessionsByLogonId[[string]$session.LogonId] = $session
+        }
+    }
+
+    $privilegedLogons = @($Events | Where-Object {
+        $_.Id -eq 4672 -and -not (Test-IsSystemSecurityAccount -Account $_.Account -Domain $_.Domain)
+    } | ForEach-Object {
+        $privileged = $_
+        $session = $sessionsByLogonId[[string]$privileged.LogonId]
+        [pscustomobject]@{
+            Id          = $privileged.Id
+            TimeCreated = $privileged.TimeCreated
+            Account     = $privileged.Account
+            Domain      = $privileged.Domain
+            LogonType   = if ($session) { $session.LogonType } else { $privileged.LogonType }
+            IpAddress   = if ($session) { $session.IpAddress } else { $privileged.IpAddress }
+            Workstation = if ($session) { $session.Workstation } else { $privileged.Workstation }
+            LogonId     = $privileged.LogonId
+            Elevated    = if ($session) { $session.Elevated } else { $privileged.Elevated }
+            Privileges  = $privileged.Privileges
+            Status      = $privileged.Status
+            SubStatus   = $privileged.SubStatus
+        }
+    })
+
+    [pscustomobject]@{
+        SuccessfulInteractive = @($Events | Where-Object { $_.Id -eq 4624 -and $_.LogonType -in 2, 10 })
+        Failed                 = @($Events | Where-Object { $_.Id -eq 4625 })
+        Findings               = @(Get-FailedLogonFindings -Events $Events -WarnThreshold $WarnThreshold -CriticalThreshold $CriticalThreshold)
+        PublicRdpLogons        = @($Events | Where-Object { $_.Id -eq 4624 -and $_.LogonType -eq 10 -and (Test-IsPublicIPAddress $_.IpAddress) })
+        PrivilegedLogons       = $privilegedLogons
+    }
+}
+
+function Get-RecentSecurityEvents {
+    param(
+        [datetime]$StartTime,
+        [int]$MaxEvents = 2000,
+        [scriptblock]$EventReader
+    )
+
+    $filter = @{
+        LogName   = "Security"
+        Id        = 4624, 4625, 4672
+        StartTime = $StartTime
+    }
+
+    try {
+        $rawEvents = if ($EventReader) {
+            & $EventReader $filter
+        } else {
+            Get-WinEvent -FilterHashtable $filter -ErrorAction Stop
+        }
+        [pscustomobject]@{
+            Events = @($rawEvents | Select-Object -First $MaxEvents)
+            Error  = $null
+        }
+    } catch {
+        [pscustomobject]@{
+            Events = @()
+            Error  = $_.Exception.Message
+        }
+    }
 }
 
 # ------------------------------------------------------------
@@ -244,6 +435,66 @@ if (-not $events -or $events.Count -eq 0) {
 }
 
 # ------------------------------------------------------------
+#  AANMELDINGSBEVEILIGING
+# ------------------------------------------------------------
+
+Write-Sectie "AANMELDINGSBEVEILIGING (laatste $AanmeldLogUren uur)"
+
+$securityResult = Get-RecentSecurityEvents `
+    -StartTime (Get-Date).AddHours(-$AanmeldLogUren) `
+    -MaxEvents $MaxAanmeldEvents
+$securityEvents = @()
+$aanmeldAnalyse = $null
+$securityFout = $securityResult.Error
+
+if ($securityFout) {
+    Write-Rij "Security-log" "Niet leesbaar: $securityFout" "WARN"
+} elseif ($securityResult.Events.Count -eq 0) {
+    Write-Rij "Aanmeldingen" "Geen events gevonden; controleer het auditbeleid" "WARN"
+} else {
+    $securityEvents = @($securityResult.Events | ForEach-Object {
+        ConvertFrom-SecurityEvent $_
+    } | Where-Object { $null -ne $_ })
+
+    if ($securityEvents.Count -eq 0) {
+        Write-Rij "Aanmeldingen" "Events konden niet worden verwerkt; controleer het auditbeleid" "WARN"
+    } else {
+        $aanmeldAnalyse = Get-LogonSecurityAnalysis `
+            -Events $securityEvents `
+            -WarnThreshold $DrempelLoginWarn `
+            -CriticalThreshold $DrempelLoginKrit
+
+        $rdpAantal = @($aanmeldAnalyse.SuccessfulInteractive | Where-Object LogonType -eq 10).Count
+        Write-Rij "Interactief/RDP" "$($aanmeldAnalyse.SuccessfulInteractive.Count) geslaagd ($rdpAantal RDP)" "INFO"
+        Write-Rij "Mislukt" "$($aanmeldAnalyse.Failed.Count) poging(en)" "INFO"
+
+        foreach ($finding in $aanmeldAnalyse.Findings) {
+            Write-Rij "Verdacht $($finding.Kind)" "$($finding.Value): $($finding.Count) poging(en)" $finding.Status
+        }
+
+        if ($aanmeldAnalyse.PublicRdpLogons.Count -gt 0) {
+            Write-Rij "Publieke RDP" "$($aanmeldAnalyse.PublicRdpLogons.Count) geslaagde aanmelding(en)" "WARN"
+        } else {
+            Write-Rij "Publieke RDP" "Geen geslaagde RDP-aanmeldingen vanaf publieke IP-adressen" "OK"
+        }
+
+        Write-Rij "Privileged" "$($aanmeldAnalyse.PrivilegedLogons.Count) niet-systeem event(s)" "INFO"
+
+        Write-Host ""
+        Write-Host "    Laatste 10 relevante aanmeldingen:" -ForegroundColor DarkGray
+        $securityEvents | Where-Object { $_.Id -in 4624, 4625 -and ($_.Id -eq 4625 -or $_.LogonType -in 2, 10) } |
+            Sort-Object TimeCreated -Descending | Select-Object -First 10 | ForEach-Object {
+                $tijd = Format-EventTime $_.TimeCreated
+                $soort = if ($_.Id -eq 4625) { "MISLUKT" } elseif ($_.LogonType -eq 10) { "RDP" } else { "INTERACTIEF" }
+                $kleur = if ($_.Id -eq 4625) { "Yellow" } elseif ($_.LogonType -eq 10 -and (Test-IsPublicIPAddress $_.IpAddress)) { "Yellow" } else { "Gray" }
+                $account = if ([string]::IsNullOrWhiteSpace($_.Account)) { "-" } else { "$($_.Domain)\$($_.Account)".TrimStart("\") }
+                $adres = if ([string]::IsNullOrWhiteSpace($_.IpAddress) -or $_.IpAddress -eq "-") { "lokaal/onbekend" } else { $_.IpAddress }
+                Write-Host "      [$soort] $tijd  $account  vanaf $adres" -ForegroundColor $kleur
+            }
+    }
+}
+
+# ------------------------------------------------------------
 #  SAMENVATTING
 # ------------------------------------------------------------
 
@@ -286,8 +537,69 @@ if ($exporteren -eq "Yes") {
     $rijen = ($Rapport | ForEach-Object {
         $kleur = Get-StatusKleur $_.Status
         $tag   = switch ($_.Status) { "OK" { "OK" } "WARN" { "!" } "KRIT" { "!!" } default { "-" } }
-        "<tr><td style='color:$kleur;font-weight:bold'>[$tag]</td><td>$($_.Label)</td><td>$($_.Waarde)</td></tr>"
+        "<tr><td style='color:$kleur;font-weight:bold'>[$tag]</td><td>$(ConvertTo-HtmlText $_.Label)</td><td>$(ConvertTo-HtmlText $_.Waarde)</td></tr>"
     }) -join "`n"
+
+    # Aanmeldingsbeveiliging
+    if ($securityFout) {
+        $securitySectie = "<h3>Aanmeldingsbeveiliging</h3><p style='color:#f39c12'>Security-log niet leesbaar: $(ConvertTo-HtmlText $securityFout)</p>"
+    } elseif ($null -eq $aanmeldAnalyse) {
+        $securitySectie = "<h3>Aanmeldingsbeveiliging</h3><p style='color:#f39c12'>Geen bruikbare aanmeldingsevents gevonden. Controleer het auditbeleid.</p>"
+    } else {
+        $findingRijen = @($aanmeldAnalyse.Findings | ForEach-Object {
+            $kleur = Get-StatusKleur $_.Status
+            "<tr><td style='color:$kleur;font-weight:bold'>$(ConvertTo-HtmlText $_.Status)</td><td>$(ConvertTo-HtmlText $_.Kind)</td><td>$(ConvertTo-HtmlText $_.Value)</td><td>$(ConvertTo-HtmlText $_.Count)</td></tr>"
+        }) -join "`n"
+        if ([string]::IsNullOrWhiteSpace($findingRijen)) {
+            $findingRijen = "<tr><td style='color:#2ecc71;font-weight:bold'>OK</td><td colspan='3'>Geen groepen boven de waarschuwingsdrempel.</td></tr>"
+        }
+
+        $aanmeldRijen = @($aanmeldAnalyse.SuccessfulInteractive | Sort-Object TimeCreated -Descending | Select-Object -First 50 | ForEach-Object {
+            $isPublicRdp = $_.LogonType -eq 10 -and (Test-IsPublicIPAddress $_.IpAddress)
+            $status = if ($isPublicRdp) { "WARN" } else { "INFO" }
+            $kleur = Get-StatusKleur $status
+            $type = if ($_.LogonType -eq 10) { "RDP" } else { "Interactief" }
+            "<tr><td style='color:$kleur;font-weight:bold'>$(ConvertTo-HtmlText $status)</td><td>$(ConvertTo-HtmlText (Format-EventTime $_.TimeCreated -Format 'dd/MM/yyyy HH:mm:ss'))</td><td>$(ConvertTo-HtmlText $type)</td><td>$(ConvertTo-HtmlText $_.Domain)\$(ConvertTo-HtmlText $_.Account)</td><td>$(ConvertTo-HtmlText $_.IpAddress)</td><td>$(ConvertTo-HtmlText $_.Workstation)</td></tr>"
+        }) -join "`n"
+        if ([string]::IsNullOrWhiteSpace($aanmeldRijen)) {
+            $aanmeldRijen = "<tr><td colspan='6'>Geen interactieve of RDP-aanmeldingen gevonden.</td></tr>"
+        }
+
+        $privilegedRijen = @($aanmeldAnalyse.PrivilegedLogons | Sort-Object TimeCreated -Descending | Select-Object -First 50 | ForEach-Object {
+            "<tr><td>$(ConvertTo-HtmlText (Format-EventTime $_.TimeCreated -Format 'dd/MM/yyyy HH:mm:ss'))</td><td>$(ConvertTo-HtmlText $_.Domain)\$(ConvertTo-HtmlText $_.Account)</td><td>$(ConvertTo-HtmlText $_.LogonId)</td><td>$(ConvertTo-HtmlText $_.Privileges)</td></tr>"
+        }) -join "`n"
+        if ([string]::IsNullOrWhiteSpace($privilegedRijen)) {
+            $privilegedRijen = "<tr><td colspan='4'>Geen niet-systeem privileged logons gevonden.</td></tr>"
+        }
+
+        $securitySectie = @"
+<h3 style='color:#00d4ff;margin-top:40px'>Aanmeldingsbeveiliging - Laatste $AanmeldLogUren uur</h3>
+<p>
+Geslaagd interactief/RDP: <b>$($aanmeldAnalyse.SuccessfulInteractive.Count)</b> &nbsp;
+Mislukt: <b>$($aanmeldAnalyse.Failed.Count)</b> &nbsp;
+Publieke RDP: <b>$($aanmeldAnalyse.PublicRdpLogons.Count)</b> &nbsp;
+Privileged: <b>$($aanmeldAnalyse.PrivilegedLogons.Count)</b>
+</p>
+
+<h4>Verdachte mislukte aanmeldingen</h4>
+<table>
+<tr><th>Status</th><th>Groepering</th><th>Waarde</th><th>Aantal</th></tr>
+$findingRijen
+</table>
+
+<h4>Recente interactieve en RDP-aanmeldingen</h4>
+<table>
+<tr><th>Status</th><th>Tijdstip</th><th>Type</th><th>Account</th><th>Bron-IP</th><th>Workstation</th></tr>
+$aanmeldRijen
+</table>
+
+<h4>Niet-systeem privileged logons</h4>
+<table>
+<tr><th>Tijdstip</th><th>Account</th><th>Logon-ID</th><th>Privileges</th></tr>
+$privilegedRijen
+</table>
+"@
+    }
 
     # Event log tabel rijen
     if ($events -and $events.Count -gt 0) {
@@ -354,6 +666,8 @@ $eventRijen
 <tr><th>Status</th><th>Onderdeel</th><th>Waarde</th></tr>
 $rijen
 </table>
+
+$securitySectie
 
 $eventSectie
 
